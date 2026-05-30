@@ -1,0 +1,23 @@
+[project]
+name = "markitdown-app"
+version = "0.1.0"
+description = "Document to Markdown converter using Microsoft MarkItDown"
+requires-python = ">=3.12"
+readme = "README.md"
+
+[tool.uv.workspace]
+members = ["api"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "httpx>=0.27",
+    "markitdown-api",
+]
+
+[tool.uv.sources]
+markitdown-api = { workspace = true }
+
+[tool.pytest.ini_options]
+pythonpath = ["api"]
+testpaths = ["tests"]

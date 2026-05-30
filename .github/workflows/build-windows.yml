@@ -1,0 +1,54 @@
+name: Build Windows
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - "win/**"
+      - "api/**"
+      - "scripts/**"
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: win/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build bundled sidecar (no Python needed for end users)
+        shell: pwsh
+        run: ./scripts/build-windows-sidecar.ps1
+
+      - name: Install frontend deps
+        working-directory: win
+        run: npm install
+
+      - name: Generate icons
+        working-directory: win
+        run: npx tauri icon src-tauri/icons/icon.png
+
+      - name: Build Windows installer
+        working-directory: win
+        run: npm run tauri:build
+
+      - name: Upload installer + exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: OCR-Review-Windows
+          path: |
+            win/src-tauri/target/release/bundle/nsis/*.exe
+            win/src-tauri/target/release/ocr-review.exe
+          retention-days: 30

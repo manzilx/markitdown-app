@@ -1,0 +1,2 @@
+# Placeholder — real binary is built in CI via scripts/build-windows-sidecar.ps1
+# Tauri requires this path to exist at build time on non-Windows dev machines.

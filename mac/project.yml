@@ -1,0 +1,49 @@
+name: OCRReview
+options:
+  bundleIdPrefix: com.ocrreview
+  deploymentTarget:
+    macOS: "14.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+    ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+    CODE_SIGN_STYLE: Automatic
+    ENABLE_HARDENED_RUNTIME: YES
+targets:
+  OCRReview:
+    type: application
+    platform: macOS
+    sources:
+      - path: OCRReview
+        excludes:
+          - "**/.DS_Store"
+          - "design/**"
+    entitlements:
+      path: OCRReview/OCRReview.entitlements
+    info:
+      path: OCRReview/Info.plist
+      properties:
+        LSMinimumSystemVersion: "14.0"
+        CFBundleDisplayName: OCR Review
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: PDF Document
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Owner
+            LSItemContentTypes:
+              - com.adobe.pdf
+          - CFBundleTypeName: Image
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes:
+              - public.jpeg
+              - public.png
+              - public.tiff
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.ocrreview.app
+      PRODUCT_NAME: OCR Review
+      GENERATE_INFOPLIST_FILE: false
+      INFOPLIST_FILE: OCRReview/Info.plist
+      CODE_SIGN_ENTITLEMENTS: OCRReview/OCRReview.entitlements
+      DEVELOPMENT_TEAM: $(DEVELOPMENT_TEAM)

@@ -1,0 +1,467 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		08A8336CA966D4235FBC5A10 /* DocumentViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 716E6FFB999E39F7426DAEEA /* DocumentViewModel.swift */; };
+		11218BB65D31AD9C2EF15B5C /* PDFPageViewWithBlocks.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9FAB147776ED28161908F510 /* PDFPageViewWithBlocks.swift */; };
+		27A3FC766A52AF7E073C1126 /* FindService.swift in Sources */ = {isa = PBXBuildFile; fileRef = FECECC429CDFFFFF09FF1949 /* FindService.swift */; };
+		30DB227B2A6BD59447ADAEEF /* PageStructureService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 84BD3A7E900A4519C80568E1 /* PageStructureService.swift */; };
+		3B6C954F14B86D63BCA55D84 /* OCRModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09FDD318D436760F7A6B79C4 /* OCRModels.swift */; };
+		3D7DC5AB47A0367D8FE65BE9 /* OCRSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E0A3039A2FA93F7F2B710AB /* OCRSettings.swift */; };
+		3FBE87C142C3965E8F00799F /* BBoxCoordinateMapper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1374318AFBCFD08AF3DBAFDD /* BBoxCoordinateMapper.swift */; };
+		417CDAD00B0C914D06218D40 /* OCRReviewApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = D390CFFF0F7DD29460B64109 /* OCRReviewApp.swift */; };
+		46D907BC212C1DEFCF7894D8 /* PDFToolsService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5081BC21786E2F2910CCDB37 /* PDFToolsService.swift */; };
+		4F0BECD33C7581190C6898A9 /* FindReplaceBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60281C9164AF240456236DBB /* FindReplaceBar.swift */; };
+		515A4812F6FE006D42B669C2 /* ThumbnailCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4BA9561271188B5CE90273FC /* ThumbnailCache.swift */; };
+		6F3EBDC5C503E51B0AE6B884 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20A318F11438B2716362CA7 /* Theme.swift */; };
+		7702AB7CB10E8DEBB20C7C57 /* ConfidencePalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54DA148A30388C3DDE90929F /* ConfidencePalette.swift */; };
+		7A44CE6A278923123181D4E7 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 5ADE9A35038333724772EC31 /* Assets.xcassets */; };
+		7B7E1C86DA2BD12F4CE075B7 /* ExportService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0310EBC5607723838CE6F9EC /* ExportService.swift */; };
+		8240D886047BF267DDE3DCCD /* JobStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF28BF40E6B5C91DF15F8D26 /* JobStore.swift */; };
+		8617CFD2A939E59D9EE8B303 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 401431A0CD514EA476139D49 /* ContentView.swift */; };
+		956A68CF74A4FE2F7C38FFA9 /* OCRTextEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68E05F16E8B76D0570E98E08 /* OCRTextEditorView.swift */; };
+		B0DEFC38284464D98A83D3A3 /* CommandPaletteView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11252FB5760E4AF3547868F4 /* CommandPaletteView.swift */; };
+		B84196AF509FE840615E92F2 /* Components.swift in Sources */ = {isa = PBXBuildFile; fileRef = 564B9C7A0EEAF665EA801827 /* Components.swift */; };
+		C287FD8BDA95BB31DA8F5D12 /* SidecarOCRService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1506852E83F397CE200284E8 /* SidecarOCRService.swift */; };
+		C7738875A2FEA5E6AFA71C21 /* VisionOCRService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2BB7002734424990BC73F6B /* VisionOCRService.swift */; };
+		D520D5B2993CE3084C065230 /* ReviewWorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22B04F9EBCB5514039B9DE68 /* ReviewWorkspaceView.swift */; };
+		D65ACAACBB39103B19F35838 /* SpellSuggestionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8987C477A327CCC2A8B26155 /* SpellSuggestionsView.swift */; };
+		E4978250BDC073F0FB1920A5 /* EngineSidecarClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 713B480B6249FD3B06C37284 /* EngineSidecarClient.swift */; };
+		EAD46605DDC16CF47ABC6CAC /* SpellcheckService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5643122EFFFAE37B70AEB9FA /* SpellcheckService.swift */; };
+		ECB3D721EEAFC64A95783AE5 /* PageThumbnailStrip.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5C7DF94AB7A27F136C3D4FB /* PageThumbnailStrip.swift */; };
+		F638307494B80966617672CA /* DocumentLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 978AE965B9AD371C77432B5B /* DocumentLoader.swift */; };
+		FF69A81257832761517DADC5 /* SidecarProcessManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 661601D54AA1640587F73989 /* SidecarProcessManager.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		0310EBC5607723838CE6F9EC /* ExportService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportService.swift; sourceTree = "<group>"; };
+		09FDD318D436760F7A6B79C4 /* OCRModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OCRModels.swift; sourceTree = "<group>"; };
+		11252FB5760E4AF3547868F4 /* CommandPaletteView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandPaletteView.swift; sourceTree = "<group>"; };
+		1374318AFBCFD08AF3DBAFDD /* BBoxCoordinateMapper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BBoxCoordinateMapper.swift; sourceTree = "<group>"; };
+		1506852E83F397CE200284E8 /* SidecarOCRService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidecarOCRService.swift; sourceTree = "<group>"; };
+		22B04F9EBCB5514039B9DE68 /* ReviewWorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewWorkspaceView.swift; sourceTree = "<group>"; };
+		3E0A3039A2FA93F7F2B710AB /* OCRSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OCRSettings.swift; sourceTree = "<group>"; };
+		401431A0CD514EA476139D49 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		4BA9561271188B5CE90273FC /* ThumbnailCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThumbnailCache.swift; sourceTree = "<group>"; };
+		5081BC21786E2F2910CCDB37 /* PDFToolsService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PDFToolsService.swift; sourceTree = "<group>"; };
+		54DA148A30388C3DDE90929F /* ConfidencePalette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfidencePalette.swift; sourceTree = "<group>"; };
+		5643122EFFFAE37B70AEB9FA /* SpellcheckService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpellcheckService.swift; sourceTree = "<group>"; };
+		564B9C7A0EEAF665EA801827 /* Components.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Components.swift; sourceTree = "<group>"; };
+		5ADE9A35038333724772EC31 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		60281C9164AF240456236DBB /* FindReplaceBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FindReplaceBar.swift; sourceTree = "<group>"; };
+		661601D54AA1640587F73989 /* SidecarProcessManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidecarProcessManager.swift; sourceTree = "<group>"; };
+		68E05F16E8B76D0570E98E08 /* OCRTextEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OCRTextEditorView.swift; sourceTree = "<group>"; };
+		6E88700ED40F15EC6B56DE3D /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		713B480B6249FD3B06C37284 /* EngineSidecarClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineSidecarClient.swift; sourceTree = "<group>"; };
+		716E6FFB999E39F7426DAEEA /* DocumentViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentViewModel.swift; sourceTree = "<group>"; };
+		84BD3A7E900A4519C80568E1 /* PageStructureService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PageStructureService.swift; sourceTree = "<group>"; };
+		8987C477A327CCC2A8B26155 /* SpellSuggestionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpellSuggestionsView.swift; sourceTree = "<group>"; };
+		8A7BB87DACBBB5A42DDB14FE /* OCRReview.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = OCRReview.entitlements; sourceTree = "<group>"; };
+		978AE965B9AD371C77432B5B /* DocumentLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentLoader.swift; sourceTree = "<group>"; };
+		9FAB147776ED28161908F510 /* PDFPageViewWithBlocks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PDFPageViewWithBlocks.swift; sourceTree = "<group>"; };
+		B2BB7002734424990BC73F6B /* VisionOCRService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisionOCRService.swift; sourceTree = "<group>"; };
+		B5C7DF94AB7A27F136C3D4FB /* PageThumbnailStrip.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PageThumbnailStrip.swift; sourceTree = "<group>"; };
+		C20A318F11438B2716362CA7 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
+		D2D85B0C24319651B1621DBA /* OCRReview.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OCRReview.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		D390CFFF0F7DD29460B64109 /* OCRReviewApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OCRReviewApp.swift; sourceTree = "<group>"; };
+		EF28BF40E6B5C91DF15F8D26 /* JobStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JobStore.swift; sourceTree = "<group>"; };
+		FECECC429CDFFFFF09FF1949 /* FindService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FindService.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		4D23B785CBCEEC2A23D882B2 = {
+			isa = PBXGroup;
+			children = (
+				983EB9081221DFE2A59E6671 /* OCRReview */,
+				F5A39EF0FC16854B009082F6 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		652B06C1C50915EA5E7C3B60 /* ViewModels */ = {
+			isa = PBXGroup;
+			children = (
+				716E6FFB999E39F7426DAEEA /* DocumentViewModel.swift */,
+			);
+			path = ViewModels;
+			sourceTree = "<group>";
+		};
+		68D00B9285E590D82FB219A7 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				09FDD318D436760F7A6B79C4 /* OCRModels.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		6CBDCB0799C64E8C549AA884 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				1374318AFBCFD08AF3DBAFDD /* BBoxCoordinateMapper.swift */,
+				54DA148A30388C3DDE90929F /* ConfidencePalette.swift */,
+				978AE965B9AD371C77432B5B /* DocumentLoader.swift */,
+				713B480B6249FD3B06C37284 /* EngineSidecarClient.swift */,
+				0310EBC5607723838CE6F9EC /* ExportService.swift */,
+				FECECC429CDFFFFF09FF1949 /* FindService.swift */,
+				EF28BF40E6B5C91DF15F8D26 /* JobStore.swift */,
+				3E0A3039A2FA93F7F2B710AB /* OCRSettings.swift */,
+				84BD3A7E900A4519C80568E1 /* PageStructureService.swift */,
+				5081BC21786E2F2910CCDB37 /* PDFToolsService.swift */,
+				1506852E83F397CE200284E8 /* SidecarOCRService.swift */,
+				661601D54AA1640587F73989 /* SidecarProcessManager.swift */,
+				5643122EFFFAE37B70AEB9FA /* SpellcheckService.swift */,
+				4BA9561271188B5CE90273FC /* ThumbnailCache.swift */,
+				B2BB7002734424990BC73F6B /* VisionOCRService.swift */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		983EB9081221DFE2A59E6671 /* OCRReview */ = {
+			isa = PBXGroup;
+			children = (
+				5ADE9A35038333724772EC31 /* Assets.xcassets */,
+				6E88700ED40F15EC6B56DE3D /* Info.plist */,
+				8A7BB87DACBBB5A42DDB14FE /* OCRReview.entitlements */,
+				D390CFFF0F7DD29460B64109 /* OCRReviewApp.swift */,
+				9C59F09567BADBB06D783AAB /* Design */,
+				68D00B9285E590D82FB219A7 /* Models */,
+				6CBDCB0799C64E8C549AA884 /* Services */,
+				652B06C1C50915EA5E7C3B60 /* ViewModels */,
+				F49D592FE78AFD3FF6AF9A6C /* Views */,
+			);
+			path = OCRReview;
+			sourceTree = "<group>";
+		};
+		9C59F09567BADBB06D783AAB /* Design */ = {
+			isa = PBXGroup;
+			children = (
+				564B9C7A0EEAF665EA801827 /* Components.swift */,
+				C20A318F11438B2716362CA7 /* Theme.swift */,
+			);
+			path = Design;
+			sourceTree = "<group>";
+		};
+		F49D592FE78AFD3FF6AF9A6C /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				11252FB5760E4AF3547868F4 /* CommandPaletteView.swift */,
+				401431A0CD514EA476139D49 /* ContentView.swift */,
+				60281C9164AF240456236DBB /* FindReplaceBar.swift */,
+				68E05F16E8B76D0570E98E08 /* OCRTextEditorView.swift */,
+				B5C7DF94AB7A27F136C3D4FB /* PageThumbnailStrip.swift */,
+				9FAB147776ED28161908F510 /* PDFPageViewWithBlocks.swift */,
+				22B04F9EBCB5514039B9DE68 /* ReviewWorkspaceView.swift */,
+				8987C477A327CCC2A8B26155 /* SpellSuggestionsView.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		F5A39EF0FC16854B009082F6 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				D2D85B0C24319651B1621DBA /* OCRReview.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		27FA4F88A99EE692DD8EAF59 /* OCRReview */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 091903C4ECAAC74E051A78AB /* Build configuration list for PBXNativeTarget "OCRReview" */;
+			buildPhases = (
+				600B906740A94BE3F73471AB /* Sources */,
+				C4185BDBF87D92AB8A3EDFBE /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = OCRReview;
+			packageProductDependencies = (
+			);
+			productName = OCRReview;
+			productReference = D2D85B0C24319651B1621DBA /* OCRReview.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		30224A86E3A22A5567F91721 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					27FA4F88A99EE692DD8EAF59 = {
+						DevelopmentTeam = "$(DEVELOPMENT_TEAM)";
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = D7FC2E5F7046E51D273D4989 /* Build configuration list for PBXProject "OCRReview" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 4D23B785CBCEEC2A23D882B2;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = F5A39EF0FC16854B009082F6 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				27FA4F88A99EE692DD8EAF59 /* OCRReview */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		C4185BDBF87D92AB8A3EDFBE /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7A44CE6A278923123181D4E7 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		600B906740A94BE3F73471AB /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				3FBE87C142C3965E8F00799F /* BBoxCoordinateMapper.swift in Sources */,
+				B0DEFC38284464D98A83D3A3 /* CommandPaletteView.swift in Sources */,
+				B84196AF509FE840615E92F2 /* Components.swift in Sources */,
+				7702AB7CB10E8DEBB20C7C57 /* ConfidencePalette.swift in Sources */,
+				8617CFD2A939E59D9EE8B303 /* ContentView.swift in Sources */,
+				F638307494B80966617672CA /* DocumentLoader.swift in Sources */,
+				08A8336CA966D4235FBC5A10 /* DocumentViewModel.swift in Sources */,
+				E4978250BDC073F0FB1920A5 /* EngineSidecarClient.swift in Sources */,
+				7B7E1C86DA2BD12F4CE075B7 /* ExportService.swift in Sources */,
+				4F0BECD33C7581190C6898A9 /* FindReplaceBar.swift in Sources */,
+				27A3FC766A52AF7E073C1126 /* FindService.swift in Sources */,
+				8240D886047BF267DDE3DCCD /* JobStore.swift in Sources */,
+				3B6C954F14B86D63BCA55D84 /* OCRModels.swift in Sources */,
+				417CDAD00B0C914D06218D40 /* OCRReviewApp.swift in Sources */,
+				3D7DC5AB47A0367D8FE65BE9 /* OCRSettings.swift in Sources */,
+				956A68CF74A4FE2F7C38FFA9 /* OCRTextEditorView.swift in Sources */,
+				11218BB65D31AD9C2EF15B5C /* PDFPageViewWithBlocks.swift in Sources */,
+				46D907BC212C1DEFCF7894D8 /* PDFToolsService.swift in Sources */,
+				30DB227B2A6BD59447ADAEEF /* PageStructureService.swift in Sources */,
+				ECB3D721EEAFC64A95783AE5 /* PageThumbnailStrip.swift in Sources */,
+				D520D5B2993CE3084C065230 /* ReviewWorkspaceView.swift in Sources */,
+				C287FD8BDA95BB31DA8F5D12 /* SidecarOCRService.swift in Sources */,
+				FF69A81257832761517DADC5 /* SidecarProcessManager.swift in Sources */,
+				D65ACAACBB39103B19F35838 /* SpellSuggestionsView.swift in Sources */,
+				EAD46605DDC16CF47ABC6CAC /* SpellcheckService.swift in Sources */,
+				6F3EBDC5C503E51B0AE6B884 /* Theme.swift in Sources */,
+				515A4812F6FE006D42B669C2 /* ThumbnailCache.swift in Sources */,
+				C7738875A2FEA5E6AFA71C21 /* VisionOCRService.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		1E97715C167B682BAD5838D0 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = OCRReview/OCRReview.entitlements;
+				COMBINE_HIDPI_IMAGES = YES;
+				DEVELOPMENT_TEAM = "$(DEVELOPMENT_TEAM)";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = OCRReview/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.ocrreview.app;
+				PRODUCT_NAME = "OCR Review";
+				SDKROOT = macosx;
+			};
+			name = Release;
+		};
+		A45BDB8ADC5E650DCF5FBCF9 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = OCRReview/OCRReview.entitlements;
+				COMBINE_HIDPI_IMAGES = YES;
+				DEVELOPMENT_TEAM = "$(DEVELOPMENT_TEAM)";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = OCRReview/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.ocrreview.app;
+				PRODUCT_NAME = "OCR Review";
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
+		A7561C4A28CDB4B0494A9563 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.9;
+			};
+			name = Release;
+		};
+		A8616EC85A3BF5E74A8EDB65 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.9;
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		091903C4ECAAC74E051A78AB /* Build configuration list for PBXNativeTarget "OCRReview" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A45BDB8ADC5E650DCF5FBCF9 /* Debug */,
+				1E97715C167B682BAD5838D0 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		D7FC2E5F7046E51D273D4989 /* Build configuration list for PBXProject "OCRReview" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A8616EC85A3BF5E74A8EDB65 /* Debug */,
+				A7561C4A28CDB4B0494A9563 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 30224A86E3A22A5567F91721 /* Project object */;
+}

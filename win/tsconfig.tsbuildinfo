@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/main.tsx","./src/vite-env.d.ts","./src/components/findreplacebar.tsx","./src/components/pdfpageview.tsx","./src/components/reviewworkspace.tsx","./src/components/settingsmodal.tsx","./src/components/welcomeview.tsx","./src/models/ocr.ts","./src/services/documentlogic.ts","./src/services/jobstore.ts","./src/services/sidecar.ts"],"version":"5.7.3"}
