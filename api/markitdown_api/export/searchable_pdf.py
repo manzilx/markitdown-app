@@ -38,12 +38,28 @@ def _block_rect(bbox: list[Any], page_rect: "pymupdf.Rect") -> "pymupdf.Rect | N
     return box
 
 
-def _draw_redaction_box(page: pymupdf.Page, block: dict[str, Any], page_rect: pymupdf.Rect) -> None:
-    """Paint an opaque black rectangle over a redacted region in the output PDF."""
-    box = _block_rect(block.get("bbox_normalized"), page_rect)
-    if box is None:
-        return
-    page.draw_rect(box, color=(0, 0, 0), fill=(0, 0, 0), width=0)
+def _add_redaction_annots(page: pymupdf.Page, blocks: list[dict[str, Any]], page_rect: pymupdf.Rect) -> bool:
+    """Mark redacted regions for true removal; returns True if any were added.
+
+    Uses redaction *annotations* so a later apply_redactions() permanently deletes the
+    underlying text and image pixels under each box — not merely paints over them
+    (a painted box leaves the original content recoverable from the file).
+    """
+    added = False
+    for block in blocks:
+        if not block.get("is_redacted"):
+            continue
+        box = _block_rect(block.get("bbox_normalized"), page_rect)
+        if box is None:
+            continue
+        page.add_redact_annot(box, fill=(0, 0, 0))
+        added = True
+    return added
+
+
+def _apply_redactions(page: pymupdf.Page) -> None:
+    # PDF_REDACT_IMAGE_PIXELS scrubs covered pixels of scanned-page images too.
+    page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_PIXELS)
 
 
 def _insert_block_text(page: pymupdf.Page, block: dict[str, Any], page_rect: pymupdf.Rect) -> None:
@@ -120,10 +136,10 @@ def build_searchable_pdf(pdf_bytes: bytes, pages: list[dict[str, Any]]) -> bytes
         ocr_text = str(page_data.get("ocr_text") or "")
         display = _page_text(page_data)
 
-        # Visual redaction: paint over redacted regions in the output.
-        for block in blocks:
-            if block.get("is_redacted") and block.get("bbox_normalized"):
-                _draw_redaction_box(page, block, rect)
+        # True redaction first: permanently remove underlying content under each box,
+        # then add the invisible OCR layer (so it isn't stripped by apply_redactions).
+        if _add_redaction_annots(page, blocks, rect):
+            _apply_redactions(page)
 
         non_redacted = [b for b in blocks if b.get("bbox_normalized") and not b.get("is_redacted")]
         used_blocks = False
@@ -157,9 +173,8 @@ def build_searchable_pdf_from_image(image_bytes: bytes, page_data: dict[str, Any
     display = _page_text(page_data)
     ocr_text = str(page_data.get("ocr_text") or "")
 
-    for block in blocks:
-        if block.get("is_redacted") and block.get("bbox_normalized"):
-            _draw_redaction_box(page, block, rect)
+    if _add_redaction_annots(page, blocks, rect):
+        _apply_redactions(page)
 
     non_redacted = [b for b in blocks if b.get("bbox_normalized") and not b.get("is_redacted")]
     used_blocks = False

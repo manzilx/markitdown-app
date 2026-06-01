@@ -13,7 +13,7 @@ stop-api:
 	@lsof -ti :8001 | xargs kill -9 2>/dev/null || true
 
 api: stop-api
-	cd $(ROOT) && uv run uvicorn markitdown_api.main:app --host 0.0.0.0 --port 8001 --reload --app-dir api
+	cd $(ROOT) && uv run uvicorn markitdown_api.main:app --host 127.0.0.1 --port 8001 --reload --app-dir api
 
 web:
 	cd $(ROOT)web && npm run dev

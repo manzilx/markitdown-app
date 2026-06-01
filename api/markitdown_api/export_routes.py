@@ -22,6 +22,12 @@ MAX_EXPORT_BYTES = 100 * 1024 * 1024
 _IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".heic"}
 
 
+def _safe_filename(name: str, fallback: str) -> str:
+    """Sanitize a client-supplied name before reflecting it into Content-Disposition."""
+    cleaned = "".join(c if c.isalnum() or c in " -_." else "_" for c in name).strip()
+    return cleaned[:80] or fallback
+
+
 @router.post("/searchable-pdf")
 async def export_searchable_pdf(
     file: UploadFile = File(...),
@@ -62,7 +68,7 @@ async def export_searchable_pdf(
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Export failed: {exc}") from exc
 
-    stem = Path(filename).stem
+    stem = _safe_filename(Path(filename).stem, "document")
     out_name = f"{stem}_searchable.pdf"
     return Response(
         content=pdf_bytes,
@@ -93,8 +99,7 @@ async def export_docx(
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Export failed: {exc}") from exc
 
-    safe_title = "".join(c if c.isalnum() or c in " -_" else "_" for c in doc_title)[:80]
-    out_name = f"{safe_title or 'export'}.docx"
+    out_name = f"{_safe_filename(doc_title, 'export')}.docx"
     return Response(
         content=docx_bytes,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
