@@ -9,7 +9,9 @@
 **Target platform:** macOS 14+ (Sonoma), Apple Silicon + Intel  
 **Target users:** Mac users who receive scanned PDFs or photos and need editable, trustworthy text without Acrobat.
 
-**Non-goals:** iOS/iPad, Windows, true in-PDF text reflow (Acrobat’s hardest edit feature), e-signatures, cloud accounts, real-time collaboration.
+**Non-goals:** iOS/iPad, true in-PDF text reflow (Acrobat’s hardest edit feature), e-signatures, cloud accounts, real-time collaboration.
+
+> **Windows:** a native WPF (.NET 8) port now lives in [`windows/`](windows/README.md) — full feature parity using `Windows.Media.Ocr`, `Windows.Data.Pdf`, and an embedded Hunspell dictionary, reusing the same Python sidecar. It builds to a standalone `OcrReview.exe`. See [Appendix E](#appendix-e-windows-app-wpf).
 
 ---
 
@@ -556,3 +558,42 @@ make api            # http://127.0.0.1:8001
 ## Appendix D: Reference
 
 F&O Copilot iOS (`fo-ai-copilot/apps/ios/`) uses a similar SwiftUI + XcodeGen + local API pattern. OCR Review adds native Vision OCR, PDFKit bbox overlay, and Acrobat-style review workflow instead of remote JSON APIs.
+
+---
+
+## Appendix E: Windows app (WPF)
+
+A native **WPF / .NET 8 (C#)** port lives in [`windows/`](windows/README.md), built for full parity and shipping as a standalone **`OcrReview.exe`**.
+
+### Architecture
+
+```
+windows/
+├── OcrReview.sln
+├── src/OcrReview.Core/   # net8.0 — models, find, export, sidecar client, JobStore,
+│   │                     #          Hunspell spell check. Cross-platform + unit-tested.
+│   └── Dictionaries/      # embedded en-US Hunspell dictionary (≈49k words)
+├── src/OcrReview.App/    # net8.0-windows — WPF UI, ViewModel, WinRT services
+└── tests/OcrReview.Core.Tests/   # xUnit (21 tests, run on any OS)
+```
+
+### Platform mapping
+
+| Concern | macOS | Windows |
+|---------|-------|---------|
+| UI | SwiftUI | WPF / XAML (indigo design system) |
+| On-device OCR | Apple Vision | **`Windows.Media.Ocr`** |
+| PDF render | PDFKit | **`Windows.Data.Pdf`** |
+| PDF edits | PDFKit | **PdfSharp** (rotate/reorder/merge/split) |
+| Suspect detection | Vision confidence | **Hunspell** (Windows OCR has no confidence — misspellings drive the heatmap, suspect spans, jump-to-issue) |
+| DOCX / searchable PDF / advanced engines | Python sidecar | **same sidecar, reused** |
+
+### Building the .exe
+
+- **CI (no Windows machine needed):** `.github/workflows/windows-build.yml` builds on a `windows-latest` runner and uploads `OcrReview.exe`. Manually trigger via `workflow_dispatch`.
+- **On Windows:** `cd windows && pwsh ./build.ps1` → self-contained `publish/OcrReview.exe`.
+
+### Verification status
+
+- **Core** (`OcrReview.Core`) compiles and its **21 xUnit tests pass** on any OS (incl. this build).
+- **App** (WPF + WinRT + PdfSharp) compiles cleanly and **publishes to a real `PE32+ Windows GUI` `OcrReview.exe`** via cross-targeting (`EnableWindowsTargeting`); CI reproduces this on a Windows runner. Runtime behavior should be exercised on Windows (the app cannot execute on macOS).
