@@ -6,7 +6,7 @@
     <Application.Resources>
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
-                <ResourceDictionary Source="/Themes/Theme.xaml"/>
+                <ResourceDictionary Source="pack://application:,,,/OcrReview;component/Themes/Theme.xaml"/>
             </ResourceDictionary.MergedDictionaries>
 
             <conv:BoolToVisibilityConverter x:Key="BoolToVis"/>

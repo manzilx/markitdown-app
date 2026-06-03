@@ -13,20 +13,31 @@ namespace OcrReview.App.Services;
 /// </summary>
 public sealed class WindowsOcrService
 {
-    private readonly OcrEngine? _engine = OcrEngine.TryCreateFromUserProfileLanguages();
+    // Lazy + guarded: WinRT activation must NOT run at app startup (it can fail to load
+    // in a packaged/self-contained build and would crash the window before it appears).
+    private readonly Lazy<OcrEngine?> _engine = new(TryCreateEngine);
     private readonly ISpellChecker _spell;
 
     public WindowsOcrService(ISpellChecker spell) => _spell = spell;
 
-    public bool IsAvailable => _engine != null;
+    public bool IsAvailable
+    {
+        get { try { return _engine.Value != null; } catch { return false; } }
+    }
+
+    private static OcrEngine? TryCreateEngine()
+    {
+        try { return OcrEngine.TryCreateFromUserProfileLanguages(); }
+        catch { return null; }
+    }
 
     public async Task<OcrPage> RecognizeAsync(SoftwareBitmap bitmap, int pageNumber)
     {
-        if (_engine == null)
-            throw new InvalidOperationException(
+        var engine = _engine.Value
+            ?? throw new InvalidOperationException(
                 "Windows OCR is unavailable. Add an OCR language in Windows Settings → Time & language → Language & region.");
 
-        var result = await _engine.RecognizeAsync(bitmap);
+        var result = await engine.RecognizeAsync(bitmap);
         int width = bitmap.PixelWidth;
         int height = bitmap.PixelHeight;
 

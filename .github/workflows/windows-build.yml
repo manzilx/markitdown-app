@@ -34,18 +34,18 @@ jobs:
       - name: Test (Core)
         run: dotnet test tests/OcrReview.Core.Tests/OcrReview.Core.Tests.csproj -c Release --no-restore
 
-      - name: Publish standalone .exe
+      # Self-contained FOLDER publish (not single-file): the most reliable form for
+      # WPF + WinRT — avoids single-file self-extraction failures at launch.
+      # Run OcrReview.exe from inside the extracted folder; no .NET install needed.
+      - name: Publish self-contained app
         run: >
           dotnet publish src/OcrReview.App/OcrReview.App.csproj
           -c Release -r win-x64 --self-contained true
-          -p:PublishSingleFile=true
-          -p:IncludeNativeLibrariesForSelfExtract=true
-          -p:EnableCompressionInSingleFile=true
           -o publish
 
-      - name: Upload OcrReview.exe
+      - name: Upload app folder
         uses: actions/upload-artifact@v7
         with:
           name: OcrReview-win-x64
-          path: windows/publish/OcrReview.exe
+          path: windows/publish
           if-no-files-found: error

@@ -31,11 +31,15 @@ windows/
 The platform-agnostic **Core** library compiles and is unit-tested anywhere (including
 in CI on a non-Windows box). The **App** (WPF + WinRT) only builds on Windows.
 
-## Getting the .exe
+## Getting the app
+
+The CI artifact is a **self-contained folder** (zipped). **Extract the zip fully**, then
+run **`OcrReview.exe`** from inside the extracted folder (the sibling DLLs must stay next
+to it). No .NET install is required.
 
 **Option A — GitHub Actions (no Windows machine needed).** Push the repo; the
 [`Windows app`](../.github/workflows/windows-build.yml) workflow builds on a
-`windows-latest` runner and uploads `OcrReview.exe` as an artifact. Trigger it
+`windows-latest` runner and uploads the `OcrReview-win-x64` artifact. Trigger it
 manually from the Actions tab (`workflow_dispatch`) too.
 
 **Option B — on a Windows machine** with the [.NET 8 SDK](https://dotnet.microsoft.com/download):
@@ -43,8 +47,19 @@ manually from the Actions tab (`workflow_dispatch`) too.
 ```powershell
 cd windows
 pwsh ./build.ps1
-# → publish/OcrReview.exe  (self-contained, no .NET install required to run)
+# → publish\OcrReview.exe  (run it from the publish folder; self-contained)
 ```
+
+## Troubleshooting "it won't open"
+
+1. **Extract first.** Don't run `OcrReview.exe` from inside the zip viewer — extract the
+   whole folder, then launch it (the DLLs next to it are required).
+2. **SmartScreen.** The build is unsigned, so Windows shows *"Windows protected your PC"* →
+   click **More info → Run anyway**. (Right-click the .exe → Properties → **Unblock** also helps.)
+3. **Antivirus** may quarantine a fresh unsigned .exe — check its quarantine/allow it.
+4. **Crash log.** If the window never appears, the app writes the error to
+   **`%LOCALAPPDATA%\OcrReview\crash.log`** — open it (or send it) to see the exact cause.
+5. **Architecture.** This is an `x64` build; it runs on x64 and on Windows-on-ARM (via emulation).
 
 ## Feature parity
 
