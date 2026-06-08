@@ -23,7 +23,13 @@ final class ThumbnailCache {
         cache.object(forKey: key(for: page, width: width))
     }
 
-    /// Render a thumbnail off the main thread, store it, and return it.
+    /// Render a thumbnail and cache it.
+    ///
+    /// Rendering happens on the **main actor**. PDFKit is not thread-safe, and this page
+    /// belongs to the same `PDFDocument` the on-screen PDF view uses — rendering it on a
+    /// background thread (as before) raced with the main thread and crashed on multi-page
+    /// documents, where the strip realizes many thumbnails at once. Thumbnails are small,
+    /// so the per-item main-thread cost is negligible and results are cached.
     func thumbnail(for page: PDFPage, width: CGFloat) async -> NSImage? {
         let cacheKey = key(for: page, width: width)
         if let hit = cache.object(forKey: cacheKey) { return hit }
@@ -32,10 +38,7 @@ final class ThumbnailCache {
         let scale = width / max(bounds.width, 1)
         let size = NSSize(width: max(bounds.width * scale, 1), height: max(bounds.height * scale, 1))
 
-        let image = await Task.detached(priority: .userInitiated) {
-            page.thumbnail(of: size, for: .mediaBox)
-        }.value
-
+        let image = page.thumbnail(of: size, for: .mediaBox)
         cache.setObject(image, forKey: cacheKey)
         return image
     }

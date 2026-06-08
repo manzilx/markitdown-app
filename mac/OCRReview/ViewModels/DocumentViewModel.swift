@@ -274,8 +274,8 @@ final class DocumentViewModel: ObservableObject {
     private func visionPrefetch(index: Int) async -> OCRPage? {
         switch loadedSource {
         case .pdf:
-            guard let page = pdfDocument?.page(at: index) else { return nil }
-            return try? await VisionOCRService.recognize(pdfPage: page, pageNumber: index + 1)
+            guard let cgImage = renderSharedPageCGImage(at: index) else { return nil }
+            return try? await VisionOCRService.recognize(cgImage: cgImage, pageNumber: index + 1)
         case .image(let url):
             return try? await VisionOCRService.recognize(imageURL: url, pageNumber: index + 1)
         case .none:
@@ -325,17 +325,25 @@ final class DocumentViewModel: ObservableObject {
         }
     }
 
+    /// Render a page of the shared on-screen document to an image **on the main actor**.
+    /// PDFKit is not thread-safe and this document is shared with the PDF view, so its
+    /// pages must never be rendered on a background thread.
+    private func renderSharedPageCGImage(at index: Int, scale: CGFloat = 2.0) -> CGImage? {
+        guard let page = pdfDocument?.page(at: index) else { return nil }
+        return VisionOCRService.renderPage(page, scale: scale)
+    }
+
     /// Recognize one page using the in-memory document (no disk re-parse).
     private func recognizeSinglePage(at index: Int, engine: String) async throws -> OCRPage {
         guard let source = loadedSource else { throw OCRError.openFailed }
         switch source {
         case .pdf:
-            guard let page = pdfDocument?.page(at: index) else { throw OCRError.renderFailed }
+            guard let cgImage = renderSharedPageCGImage(at: index) else { throw OCRError.renderFailed }
             if engine == "vision" {
-                return try await VisionOCRService.recognize(pdfPage: page, pageNumber: index + 1)
+                return try await VisionOCRService.recognize(cgImage: cgImage, pageNumber: index + 1)
             }
             try await EngineSidecarClient.ensureAvailable()
-            return try await SidecarOCRService.recognize(pdfPage: page, pageNumber: index + 1, engine: engine)
+            return try await SidecarOCRService.recognize(cgImage: cgImage, pageNumber: index + 1, engine: engine)
         case .image(let url):
             if engine == "vision" {
                 return try await VisionOCRService.recognize(imageURL: url, pageNumber: index + 1)

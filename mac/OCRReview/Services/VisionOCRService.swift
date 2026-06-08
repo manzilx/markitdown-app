@@ -8,14 +8,18 @@ enum VisionOCRService {
     /// Concurrency for whole-document recognition. Vision leans on the Neural Engine/GPU,
     /// so we cap workers to avoid thrashing while still using multiple cores.
     static var maxConcurrentOCR: Int {
-        min(6, max(2, ProcessInfo.processInfo.activeProcessorCount - 2))
+        min(4, max(2, ProcessInfo.processInfo.activeProcessorCount - 2))
     }
 
     // MARK: - Single page (reuses the in-memory document — no disk re-parse)
 
+    /// Render + recognize a page. Only safe for a PDFPage from a document NOT shared with
+    /// the main thread (e.g. the per-worker documents in `recognizeAllPages`). For the
+    /// shared on-screen document, render on the main actor and call `recognize(cgImage:)`.
     static func recognize(pdfPage: PDFPage, pageNumber: Int) async throws -> OCRPage {
-        guard let cgImage = renderPage(pdfPage, scale: 2.0) else {
-            throw OCRError.renderFailed
+        let cgImage = try autoreleasepool { () throws -> CGImage in
+            guard let image = renderPage(pdfPage, scale: 2.0) else { throw OCRError.renderFailed }
+            return image
         }
         return try await recognize(cgImage: cgImage, pageNumber: pageNumber)
     }
@@ -51,8 +55,9 @@ enum VisionOCRService {
                     var produced: [(Int, OCRPage)] = []
                     var index = worker
                     while index < pageCount {
-                        if let page = doc.page(at: index) {
-                            let ocr = try await recognize(pdfPage: page, pageNumber: index + 1)
+                        // Tolerate a single bad page instead of failing the whole batch.
+                        if let page = doc.page(at: index),
+                           let ocr = try? await recognize(pdfPage: page, pageNumber: index + 1) {
                             produced.append((index, ocr))
                         }
                         await counter.tick()
@@ -75,7 +80,9 @@ enum VisionOCRService {
 
     // MARK: - Core recognition
 
-    private static func recognize(cgImage: CGImage, pageNumber: Int) async throws -> OCRPage {
+    /// Recognize a pre-rendered image off the main thread. Render the shared on-screen
+    /// document on the main actor, then hand the CGImage here.
+    static func recognize(cgImage: CGImage, pageNumber: Int) async throws -> OCRPage {
         try await withCheckedThrowingContinuation { continuation in
             let request = VNRecognizeTextRequest { request, error in
                 if let error {
