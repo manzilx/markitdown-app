@@ -973,13 +973,22 @@ public sealed class DocumentViewModel : ObservableObject
         if (await _sidecar.IsAvailableAsync()) return;
         await _sidecarManager.EnsureRunningAsync();
         if (!await _sidecar.IsAvailableAsync())
+        {
+            // Include the manager's concrete diagnostic (crashed / exe missing / port
+            // busy + the helper's own output tail) so the dialog says WHY, not just
+            // the generic possibilities.
+            var diagnostic = _sidecarManager.LastDiagnostic is { Length: > 0 } d
+                ? $"\n\nWhat happened:\n{d}"
+                : "";
             throw new SidecarException(
                 "Couldn't start the Python helper that this feature needs.\n\n" +
                 "Word (.docx) export, searchable-PDF export, and the advanced cloud OCR engines use it. " +
                 "Everything else — recognizing text, editing, denoise, and exporting to Markdown, plain text, or RTF — works without it.\n\n" +
                 "The helper (ocr-sidecar.exe) ships next to OcrReview.exe. If it won't start, the usual causes are " +
                 "antivirus blocking it (allow ocr-sidecar.exe), the file being missing (re-extract the download and keep both files together), " +
-                "or port 8001 being in use. You can also point Settings → Python helper at a project checkout.");
+                "or port 8001 being in use. Full details are in %LOCALAPPDATA%\\OcrReview\\sidecar.log." +
+                diagnostic);
+        }
     }
 
     // ---- Settings ----

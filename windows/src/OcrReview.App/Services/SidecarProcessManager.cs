@@ -98,6 +98,18 @@ public sealed class SidecarProcessManager
     public bool IsRunning { get; private set; }
     public string StatusMessage { get; private set; } = "Sidecar not started";
 
+    /// <summary>Human-readable reason the last start attempt failed (process crashed,
+    /// exe missing, port busy, …) plus the tail of the helper's own output. Surfaced
+    /// in the error dialog so failures are diagnosable instead of opaque.</summary>
+    public string? LastDiagnostic { get; private set; }
+
+    private readonly object _outputGate = new();
+    private string _recentOutput = "";
+
+    private string SidecarLogPath => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "OcrReview", "sidecar.log");
+
     public SidecarProcessManager(SidecarClient client, Func<string> projectRootGetter)
     {
         _client = client;
@@ -119,19 +131,60 @@ public sealed class SidecarProcessManager
             Start();
         }
 
-        for (int i = 0; i < 30; i++)
+        // The bundled helper is a ~100 MB PyInstaller bundle: its first run extracts to
+        // %TEMP% and imports heavy libraries, which on a slow disk (and with antivirus
+        // scanning each extracted file) can take well over a minute. Wait patiently —
+        // but bail the instant the process exits, so a hard failure (crash, AV kill,
+        // port busy) is reported immediately instead of after the full ceiling.
+        const int maxWaitSeconds = 90;
+        for (int i = 0; i < maxWaitSeconds * 2; i++)
         {
             await Task.Delay(500);
             if (await _client.IsAvailableAsync())
             {
                 IsRunning = true;
+                LastDiagnostic = null;
                 StatusMessage = $"Sidecar started at {_client.BaseUrl}";
+                return;
+            }
+            // Process died during startup — no point waiting the rest of the ceiling.
+            if (_process is { HasExited: true } dead)
+            {
+                IsRunning = false;
+                int code = SafeExitCode(dead);
+                LastDiagnostic = $"The helper exited (code {code}) during startup.\n\n{OutputTail()}";
+                StatusMessage = "The Python helper exited during startup. See sidecar.log.";
                 return;
             }
         }
 
         IsRunning = false;
-        StatusMessage = "Could not start sidecar automatically. Check the project path in Settings.";
+        LastDiagnostic = _process == null
+            ? FailureToLaunchDiagnostic()
+            : $"The helper started but never became reachable on {_client.BaseUrl} within {maxWaitSeconds}s.\n\n{OutputTail()}";
+        StatusMessage = "Could not start the Python helper automatically.";
+    }
+
+    private static int SafeExitCode(Process p)
+    {
+        try { return p.ExitCode; } catch { return -1; }
+    }
+
+    private string OutputTail()
+    {
+        lock (_outputGate)
+        {
+            if (string.IsNullOrWhiteSpace(_recentOutput)) return "(the helper produced no output — likely blocked before it ran.)";
+            var tail = _recentOutput.Length > 1200 ? _recentOutput[^1200..] : _recentOutput;
+            return "Last helper output:\n" + tail.Trim();
+        }
+    }
+
+    private string FailureToLaunchDiagnostic()
+    {
+        if (ResolveBundledSidecar() == null && ResolveProjectRoot() == null)
+            return "ocr-sidecar.exe was not found next to OcrReview.exe. Re-extract the download and keep both files in the same folder.";
+        return "The helper process could not be launched — antivirus may have blocked or quarantined ocr-sidecar.exe.";
     }
 
     public async Task RestartAsync()
@@ -178,12 +231,37 @@ public sealed class SidecarProcessManager
 
     private void StartProcess(ProcessStartInfo psi, string startingMessage)
     {
+        // Capture the helper's own stdout/stderr — without this a startup crash
+        // (missing DLL, import error, port-bind failure) is completely invisible.
+        psi.RedirectStandardOutput = true;
+        psi.RedirectStandardError = true;
+        lock (_outputGate) { _recentOutput = ""; }
+        try
+        {
+            var stamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+            AppendOutput($"=== {stamp} launching {psi.FileName} {psi.Arguments} ===");
+        }
+        catch { /* logging is best effort */ }
+
         try
         {
             var process = Process.Start(psi);
             _process = process;
             StatusMessage = startingMessage;
-            if (process == null) return;
+            if (process == null)
+            {
+                LastDiagnostic = FailureToLaunchDiagnostic();
+                return;
+            }
+
+            process.OutputDataReceived += (_, e) => { if (e.Data != null) AppendOutput(e.Data); };
+            process.ErrorDataReceived += (_, e) => { if (e.Data != null) AppendOutput(e.Data); };
+            try
+            {
+                process.BeginOutputReadLine();
+                process.BeginErrorReadLine();
+            }
+            catch { /* streams unavailable on some hosts */ }
 
             // Tie the child to this process's lifetime — survives even a crash.
             if (KillOnCloseJob != IntPtr.Zero)
@@ -213,6 +291,22 @@ public sealed class SidecarProcessManager
         {
             StatusMessage = "Failed to launch sidecar: " + ex.Message;
         }
+    }
+
+    private void AppendOutput(string line)
+    {
+        lock (_outputGate)
+        {
+            _recentOutput += line + "\n";
+            if (_recentOutput.Length > 8000) _recentOutput = _recentOutput[^8000..];
+        }
+        try
+        {
+            var dir = Path.GetDirectoryName(SidecarLogPath);
+            if (dir != null) Directory.CreateDirectory(dir);
+            File.AppendAllText(SidecarLogPath, line + Environment.NewLine);
+        }
+        catch { /* logging is best effort */ }
     }
 
     /// <summary>Find a bundled <c>ocr-sidecar.exe</c>. Checks the app folder (folder
