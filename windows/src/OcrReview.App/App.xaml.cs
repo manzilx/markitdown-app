@@ -22,6 +22,24 @@ public partial class App : Application
     {
         LogEnvironment();
         base.OnStartup(e);
+
+        // Create and show the window here (not via StartupUri) so any failure building
+        // the window — a bad binding, a theme/resource error — is caught synchronously
+        // and reported, instead of throwing out of the framework with no UI.
+        try
+        {
+            var window = new Views.MainWindow();
+            MainWindow = window;
+            window.Show();
+        }
+        catch (Exception ex)
+        {
+            LogCrash(ex, fatal: true);
+            ShowErrorDialog(
+                "OCR Review could not open its main window:\n\n" + ex.Message +
+                "\n\nDetails were written to:\n%LOCALAPPDATA%\\OcrReview\\crash.log");
+            Shutdown(1);
+        }
     }
 
     private void OnDispatcherException(object sender, DispatcherUnhandledExceptionEventArgs e)

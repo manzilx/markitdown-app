@@ -149,7 +149,7 @@
                     <!-- Progress -->
                     <StackPanel Orientation="Horizontal" Margin="12,0,0,0" VerticalAlignment="Center"
                                 Visibility="{Binding IsProcessing, Converter={StaticResource BoolToVis}}">
-                        <ProgressBar Width="90" Height="6" Minimum="0" Maximum="1" Value="{Binding Progress}"
+                        <ProgressBar Width="90" Height="6" Minimum="0" Maximum="1" Value="{Binding Progress, Mode=OneWay}"
                                      Foreground="{StaticResource AccentBrush}" Background="{StaticResource SurfaceHighBrush}" BorderThickness="0"/>
                         <TextBlock Text="Working…" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}" Margin="8,0,0,0"/>
                     </StackPanel>
