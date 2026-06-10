@@ -104,10 +104,21 @@ public partial class ThumbnailStrip : UserControl
 
     private async void OnThumbLoaded(object sender, RoutedEventArgs e)
     {
-        if (sender is FrameworkElement { DataContext: ThumbItem item } && item.Image == null && _vm != null)
+        // async void: a damaged page throws from the renderer, and virtualization
+        // re-fires Loaded every time the container scrolls into view — without this
+        // guard one bad page means a crash dialog on every scroll. Show a blank thumb.
+        try
         {
-            var image = await _vm.RenderThumbnailAsync(item.Index);
-            if (image != null) item.Image = image;
+            if (sender is FrameworkElement { DataContext: ThumbItem item } && item.Image == null && _vm != null)
+            {
+                var image = await _vm.RenderThumbnailAsync(item.Index);
+                if (image != null) item.Image = image;
+            }
+        }
+        catch
+        {
+            // Leave the placeholder; the page view will surface a real error if the
+            // user actually navigates to this page.
         }
     }
 

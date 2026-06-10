@@ -273,7 +273,7 @@ public static class DenoiseService
         {
             if (!filtered.PageResults.TryGetValue(page.PageNumber, out var result)) continue;
             page.SetDisplayText(result.CleanedText);
-            CleanBlocks(page, result.RemovedKeys);
+            CleanBlocks(page, result.RemovedLines);
         }
         return new ApplicationResult { Document = document, Plan = filtered };
     }
@@ -309,16 +309,22 @@ public static class DenoiseService
         };
     }
 
-    /// <summary>Clear edge blocks whose normalized text matches a removed line, so
-    /// redaction/export/block paths also drop the noise.</summary>
-    private static void CleanBlocks(OcrPage page, HashSet<string> removedKeys)
+    /// <summary>Clear edge blocks matching a removed line, so redaction/export/block
+    /// paths also drop the noise. Repeated-text removals match by normalized key;
+    /// page-number removals match by EXACT text — their normalized key is just "#",
+    /// which would otherwise blank every numeric edge block (years, totals).</summary>
+    private static void CleanBlocks(OcrPage page, IReadOnlyList<RemovedLine> removals)
     {
-        if (page.Blocks.Count == 0 || removedKeys.Count == 0) return;
+        if (page.Blocks.Count == 0 || removals.Count == 0) return;
+        var repeatedKeys = removals.Where(l => l.Reason == Reason.RepeatedEdgeText)
+            .Select(l => l.NormalizedKey).ToHashSet();
+        var pageNumberTexts = removals.Where(l => l.Reason == Reason.PageNumber)
+            .Select(l => l.Text).ToHashSet(StringComparer.Ordinal);
         foreach (var block in page.Blocks)
         {
             var text = block.Text.Trim();
             if (text.Length == 0 || !BlockIsEdge(block)) continue;
-            if (removedKeys.Contains(NormalizedKey(text))) block.Text = "";
+            if (repeatedKeys.Contains(NormalizedKey(text)) || pageNumberTexts.Contains(text)) block.Text = "";
         }
     }
 
@@ -411,7 +417,7 @@ public static class DenoiseService
             $"^\\s*page\\s+{p}\\s+(of|/)\\s+{t}\\s*$",
             $"^\\s*{p}\\s*(/|of)\\s*{t}\\s*$",
         };
-        return patterns.Any(pat => Regex.IsMatch(trimmed, pat, RegexOptions.IgnoreCase));
+        return patterns.Any(pat => Regex.IsMatch(trimmed, pat, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant));
     }
 
     /// <summary>The line looks like a page number independent of the file index: a bare or
@@ -428,7 +434,7 @@ public static class DenoiseService
             "^\\d{1,4}\\s*(of|/)\\s*\\d{1,4}$",
             "^[\\(\\[\\{]\\s*\\d{1,4}(\\s*(of|/|-|–|—)\\s*\\d{1,4})?\\s*[\\)\\]\\}]$",
         };
-        if (patterns.Any(pat => Regex.IsMatch(trimmed, pat, RegexOptions.IgnoreCase))) return true;
+        if (patterns.Any(pat => Regex.IsMatch(trimmed, pat, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))) return true;
         return IsRomanNumeralPageNumber(trimmed);
     }
 
@@ -439,7 +445,7 @@ public static class DenoiseService
         var stripped = trimmed.Trim('-', '–', '—', '•', '·', '.', ' ', '\t', '(', ')', '[', ']', '{', '}');
         if (stripped.Length == 0 || stripped.Length > 10) return false;
         const string roman = "^(?=[mdclxvi])m{0,3}(cm|cd|d?c{0,3})(xc|xl|l?x{0,3})(ix|iv|v?i{0,3})$";
-        return Regex.IsMatch(stripped, roman, RegexOptions.IgnoreCase);
+        return Regex.IsMatch(stripped, roman, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
     }
 
     private static bool BlockIsEdge(OcrBlock block)

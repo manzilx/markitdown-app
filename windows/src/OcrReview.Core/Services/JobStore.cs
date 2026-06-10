@@ -23,9 +23,16 @@ public sealed class JobStore
     private readonly string _dir;
     private readonly string _indexPath;
     private readonly object _gate = new();
+    /// <summary>Serializes disk writes so a timer-thread flush and a UI-thread flush
+    /// can't interleave writes to the same job file (last-finisher-wins corruption).</summary>
+    private readonly object _ioGate = new();
     private readonly Dictionary<Guid, string> _pending = new();
     private List<OcrDocument> _recents = new();
     private Timer? _timer;
+    private DateTime _oldestPendingUtc;
+    /// <summary>Continuous typing re-arms the debounce forever; cap how long an edit
+    /// can sit unsaved so a crash mid-session loses at most this much work.</summary>
+    private static readonly TimeSpan MaxPendingAge = TimeSpan.FromSeconds(3);
 
     /// <summary>Raised after a flush updates recents. May fire on a background thread.</summary>
     public event Action? RecentsChanged;
@@ -49,12 +56,19 @@ public sealed class JobStore
     public void ScheduleSave(OcrDocument document)
     {
         var json = JsonSerializer.Serialize(document, JsonOpts);
+        bool flushNow;
         lock (_gate)
         {
+            if (_pending.Count == 0) _oldestPendingUtc = DateTime.UtcNow;
             _pending[document.Id] = json;
-            _timer?.Dispose();
-            _timer = new Timer(_ => Flush(), null, DebounceMs, Timeout.Infinite);
+            flushNow = DateTime.UtcNow - _oldestPendingUtc >= MaxPendingAge;
+            if (!flushNow)
+            {
+                _timer?.Dispose();
+                _timer = new Timer(_ => Flush(), null, DebounceMs, Timeout.Infinite);
+            }
         }
+        if (flushNow) Flush();
     }
 
     /// <summary>Immediate save for infrequent, important changes.</summary>
@@ -77,13 +91,25 @@ public sealed class JobStore
             _pending.Clear();
         }
 
-        foreach (var kv in items)
+        lock (_ioGate)
         {
-            try { File.WriteAllText(JobPath(kv.Key), kv.Value); }
-            catch { /* best effort */ }
+            foreach (var kv in items)
+            {
+                // Atomic write: a crash or power loss mid-write must not leave a
+                // truncated job file (which deserializes to null and silently drops
+                // the document with all its OCR and edits).
+                try
+                {
+                    var path = JobPath(kv.Key);
+                    var temp = path + ".tmp";
+                    File.WriteAllText(temp, kv.Value);
+                    File.Move(temp, path, overwrite: true);
+                }
+                catch { /* best effort */ }
 
-            var doc = TryDeserialize(kv.Value);
-            if (doc != null) UpsertRecent(doc);
+                var doc = TryDeserialize(kv.Value);
+                if (doc != null) UpsertRecent(doc);
+            }
         }
         RecentsChanged?.Invoke();
     }

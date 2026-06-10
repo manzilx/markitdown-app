@@ -28,7 +28,13 @@ public partial class MainWindow : Window
         }
     }
 
-    private void OnClosing(object? sender, CancelEventArgs e) => _vm.FlushSaves();
+    private void OnClosing(object? sender, CancelEventArgs e)
+    {
+        _vm.FlushSaves();
+        // Kill the sidecar we spawned — otherwise it outlives the app holding port
+        // 8001. (Crash exits are covered by the kill-on-close job object.)
+        _vm.SidecarManager.Stop();
+    }
 
     private void OnDragOver(object sender, DragEventArgs e)
     {

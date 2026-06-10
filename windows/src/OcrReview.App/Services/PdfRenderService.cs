@@ -27,17 +27,22 @@ public sealed class PdfRenderService
         await _lock.WaitAsync();
         try
         {
-            _pdf = null;
-            _imagePath = null;
+            // Load into locals and swap only on success — clearing the current
+            // document first would leave the whole app rendering blank if the new
+            // file turns out to be corrupt or password-protected.
+            PdfDocument? pdf = null;
+            string? imagePath = null;
             if (DocumentLoader.IsPdf(path))
             {
                 var file = await StorageFile.GetFileFromPathAsync(path);
-                _pdf = await PdfDocument.LoadFromFileAsync(file);
+                pdf = await PdfDocument.LoadFromFileAsync(file);
             }
             else
             {
-                _imagePath = path;
+                imagePath = path;
             }
+            _pdf = pdf;
+            _imagePath = imagePath;
         }
         finally { _lock.Release(); }
     }

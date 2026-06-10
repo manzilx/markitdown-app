@@ -21,7 +21,9 @@ public sealed class SidecarClient
     public SidecarClient(string baseUrl)
     {
         BaseUrl = baseUrl.TrimEnd('/');
-        _http = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
+        // A hung sidecar must not pin IsProcessing forever with no cancel path.
+        // 10 minutes comfortably covers huge exports while still bounding the wait.
+        _http = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
     }
 
     public async Task<bool> IsAvailableAsync()

@@ -27,6 +27,11 @@ public sealed class DocumentViewModel : ObservableObject
     private string _sourcePath = "";
     private bool _isPdf;
 
+    /// Bumped whenever the loaded document changes (open/close). In-flight OCR work
+    /// captured under an older generation must NOT merge its results — the renderer
+    /// and Document it would touch belong to a different file now.
+    private int _docGeneration;
+
     public DocumentViewModel()
     {
         _sidecar = new SidecarClient(_settings.SidecarUrl);
@@ -272,6 +277,9 @@ public sealed class DocumentViewModel : ObservableObject
         ErrorMessage = null;
         IsProcessing = true;
         Progress = 0;
+        _docGeneration++;
+        _denoiseUndoJson = null;
+        OnPropertyChanged(nameof(CanUndoDenoise));
         try
         {
             await _renderer.LoadAsync(path);
@@ -309,25 +317,38 @@ public sealed class DocumentViewModel : ObservableObject
 
     public async void OpenRecent(OcrDocument recent)
     {
-        if (!File.Exists(recent.SourcePath))
+        // async void: an uncaught exception here lands in the global crash dialog, so
+        // this must guard everything — corrupt/encrypted PDFs throw from LoadAsync.
+        try
         {
-            ErrorMessage = "The original file could not be found.";
-            return;
+            if (!File.Exists(recent.SourcePath))
+            {
+                ErrorMessage = "The original file could not be found.";
+                return;
+            }
+            _docGeneration++;
+            _denoiseUndoJson = null;
+            OnPropertyChanged(nameof(CanUndoDenoise));
+            await _renderer.LoadAsync(recent.SourcePath);
+            _sourcePath = recent.SourcePath;
+            _isPdf = _renderer.IsPdf;
+            PdfModified = false;
+            Document = recent;
+            CurrentPageIndex = 0;
+            SelectedBlockId = null;
+            ZoomLevel = 1.0;
+            SyncPageJump();
+            await RenderCurrentPageAsync();
         }
-        await _renderer.LoadAsync(recent.SourcePath);
-        _sourcePath = recent.SourcePath;
-        _isPdf = _renderer.IsPdf;
-        PdfModified = false;
-        Document = recent;
-        CurrentPageIndex = 0;
-        SelectedBlockId = null;
-        ZoomLevel = 1.0;
-        SyncPageJump();
-        await RenderCurrentPageAsync();
+        catch (Exception ex)
+        {
+            ErrorMessage = ex.Message;
+        }
     }
 
     public void CloseDocument()
     {
+        _docGeneration++;
         _jobStore.Flush();
         Document = null;
         CurrentPageImage = null;
@@ -336,6 +357,8 @@ public sealed class DocumentViewModel : ObservableObject
         IsFindVisible = false;
         SelectedBlockId = null;
         PdfModified = false;
+        _denoiseUndoJson = null;
+        OnPropertyChanged(nameof(CanUndoDenoise));
     }
 
     private async Task RenderCurrentPageAsync()
@@ -355,9 +378,19 @@ public sealed class DocumentViewModel : ObservableObject
 
     private async Task AfterPageChangeAsync(int index)
     {
-        await RenderCurrentPageAsync();
-        if (Document?.Page(index + 1) == null) await RecognizePageAsync(index);
-        PrefetchAdjacent(index);
+        // Invoked fire-and-forget from GoToPage — without this guard a page-render
+        // failure is swallowed as an unobserved task exception and the page just
+        // silently never updates.
+        try
+        {
+            await RenderCurrentPageAsync();
+            if (Document?.Page(index + 1) == null) await RecognizePageAsync(index);
+            PrefetchAdjacent(index);
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = ex.Message;
+        }
     }
 
     public void JumpToPageFromField()
@@ -374,11 +407,15 @@ public sealed class DocumentViewModel : ObservableObject
     {
         if (Document is not { } doc) return;
         if (!force && doc.Page(index + 1) != null) return;
+        var generation = _docGeneration;
 
         IsProcessing = true;
         try
         {
             var page = await RecognizeSinglePageAsync(index, _settings.Engine);
+            // The user may have opened a different document during the await — the
+            // renderer that produced this text belongs to the old file.
+            if (_docGeneration != generation || Document?.Id != doc.Id) return;
             var existing = doc.Pages.FindIndex(p => p.PageNumber == page.PageNumber);
             if (existing >= 0) doc.Pages[existing] = page;
             else doc.Pages.Add(page);
@@ -427,16 +464,28 @@ public sealed class DocumentViewModel : ObservableObject
 
         IsProcessing = true;
         Progress = 0;
+        var generation = _docGeneration;
+        var engine = _settings.Engine;
         try
         {
-            var pages = new List<OcrPage>();
-            for (int i = 0; i < TotalPages; i++)
+            int total = TotalPages;
+            for (int i = 0; i < total; i++)
             {
-                pages.Add(await RecognizeSinglePageAsync(i, _settings.Engine));
-                Progress = (double)(i + 1) / TotalPages;
+                // Stop dead if the user switched documents mid-run — the renderer now
+                // holds the new file and would attribute its pages to the old doc.
+                if (_docGeneration != generation || Document?.Id != doc.Id) return;
+                // Merge per page, skipping ones already recognized — wholesale
+                // replacement would discard the user's text edits.
+                if (doc.Page(i + 1) == null)
+                {
+                    var page = await RecognizeSinglePageAsync(i, engine);
+                    if (_docGeneration != generation || Document?.Id != doc.Id) return;
+                    doc.Pages.Add(page);
+                }
+                Progress = (double)(i + 1) / total;
             }
-            doc.Pages = pages;
-            doc.Engine = _settings.Engine;
+            doc.Pages.Sort((a, b) => a.PageNumber.CompareTo(b.PageNumber));
+            doc.Engine = engine;
             _jobStore.Save(doc);
             NotifyDocumentDerived();
             RefreshFindResults();
@@ -457,6 +506,11 @@ public sealed class DocumentViewModel : ObservableObject
         if (_settings.Engine != EngineCatalog.DefaultEngine) return;
         int next = index + 1;
         if (next >= TotalPages || Document?.Page(next + 1) != null) return;
+        // Capture identity NOW: if the user opens another document while this runs,
+        // the result must be dropped, not merged into the new document.
+        var generation = _docGeneration;
+        var documentId = Document?.Id;
+        if (documentId == null) return;
         _ = Task.Run(async () =>
         {
             try
@@ -464,15 +518,16 @@ public sealed class DocumentViewModel : ObservableObject
                 var bitmap = await _renderer.RenderPageSoftwareBitmapAsync(next);
                 if (bitmap == null) return;
                 var page = await _ocr.RecognizeAsync(bitmap, next + 1);
-                RunOnUi(() => MergePrefetched(page));
+                RunOnUi(() => MergePrefetched(page, documentId.Value, generation));
             }
             catch { /* best effort */ }
         });
     }
 
-    private void MergePrefetched(OcrPage page)
+    private void MergePrefetched(OcrPage page, Guid documentId, int generation)
     {
-        if (Document is not { } doc || doc.Page(page.PageNumber) != null) return;
+        if (_docGeneration != generation) return;
+        if (Document is not { } doc || doc.Id != documentId || doc.Page(page.PageNumber) != null) return;
         doc.Pages.Add(page);
         doc.Pages.Sort((a, b) => a.PageNumber.CompareTo(b.PageNumber));
         _jobStore.ScheduleSave(doc);
@@ -726,25 +781,30 @@ public sealed class DocumentViewModel : ObservableObject
         return Path.GetFileNameWithoutExtension(name);
     }
 
-    private void ExportMarkdown()
-    {
-        if (Document is not { } doc) return;
-        var path = AskSave($"{FilenameStem()}.md", "Markdown (*.md)|*.md");
-        if (path != null) File.WriteAllText(path, ExportService.Markdown(doc, TotalPages));
-    }
+    private void ExportMarkdown() =>
+        ExportTextFile($"{FilenameStem()}.md", "Markdown (*.md)|*.md", doc => ExportService.Markdown(doc, TotalPages));
 
-    private void ExportText()
-    {
-        if (Document is not { } doc) return;
-        var path = AskSave($"{FilenameStem()}.txt", "Text (*.txt)|*.txt");
-        if (path != null) File.WriteAllText(path, ExportService.PlainText(doc, TotalPages));
-    }
+    private void ExportText() =>
+        ExportTextFile($"{FilenameStem()}.txt", "Text (*.txt)|*.txt", doc => ExportService.PlainText(doc, TotalPages));
 
-    private void ExportRtf()
+    private void ExportRtf() =>
+        ExportTextFile($"{FilenameStem()}.rtf", "Rich Text (*.rtf)|*.rtf", doc => ExportService.Rtf(doc, TotalPages));
+
+    private void ExportTextFile(string suggestedName, string filter, Func<OcrDocument, string> render)
     {
         if (Document is not { } doc) return;
-        var path = AskSave($"{FilenameStem()}.rtf", "Rich Text (*.rtf)|*.rtf");
-        if (path != null) File.WriteAllText(path, ExportService.Rtf(doc, TotalPages));
+        var path = AskSave(suggestedName, filter);
+        if (path == null) return;
+        // A locked/read-only target or full disk throws synchronously on the UI
+        // thread — surface it as a normal error, not the crash dialog.
+        try
+        {
+            File.WriteAllText(path, render(doc));
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = ex.Message;
+        }
     }
 
     private async Task ExportDocxAsync()
@@ -798,16 +858,32 @@ public sealed class DocumentViewModel : ObservableObject
             remap: doc => doc.Pages = PageStructureService.RemapAfterDelete(doc.Pages, deleted));
         if (CurrentPageIndex >= TotalPages) CurrentPageIndex = Math.Max(0, TotalPages - 1);
         SyncPageJump();
-        await RenderCurrentPageAsync();
+        try
+        {
+            await RenderCurrentPageAsync();
+        }
+        catch (Exception ex)
+        {
+            // Invoked fire-and-forget; don't let a render failure go unobserved.
+            ErrorMessage = ex.Message;
+        }
     }
 
     public async void MovePage(int from, int to)
     {
-        if (!_isPdf || from == to) return;
-        await ApplyEditAsync(
-            temp => PdfEditService.Move(_sourcePath, from, to, temp),
-            remap: doc => doc.Pages = PageStructureService.RemapAfterMove(doc.Pages, from, to, doc.TotalPageCount));
-        await RenderCurrentPageAsync();
+        // async void: guard everything so a render failure can't hit the crash dialog.
+        try
+        {
+            if (!_isPdf || from == to) return;
+            await ApplyEditAsync(
+                temp => PdfEditService.Move(_sourcePath, from, to, temp),
+                remap: doc => doc.Pages = PageStructureService.RemapAfterMove(doc.Pages, from, to, doc.TotalPageCount));
+            await RenderCurrentPageAsync();
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = ex.Message;
+        }
     }
 
     private async Task AppendAsync()
@@ -846,10 +922,28 @@ public sealed class DocumentViewModel : ObservableObject
         if (Document is not { } doc) return;
         try
         {
-            var temp = Path.Combine(Path.GetTempPath(), $"ocrreview-{Guid.NewGuid():N}.pdf");
-            edit(temp);
-            await _renderer.LoadAsync(temp);
-            _sourcePath = temp;
+            // Persist structural edits to app data, NOT %TEMP%: the stored OCR pages
+            // are remapped against the edited PDF, so if the edited file vanished (temp
+            // cleanup) the doc would reopen from the ORIGINAL file with every page's
+            // text shifted. App data survives, and SourcePath follows it so Recents
+            // reopen the same file the OCR mapping describes.
+            var dir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "OcrReview", "documents");
+            Directory.CreateDirectory(dir);
+            // Versioned filename: the renderer holds the current file open, so the new
+            // version must be a NEW file — state swaps only after it loads cleanly.
+            var edited = Path.Combine(dir, $"{doc.Id:N}-{Guid.NewGuid():N}.pdf");
+            edit(edited);
+            var previous = _sourcePath;
+            await _renderer.LoadAsync(edited);
+            _sourcePath = edited;
+            doc.SourcePath = edited;
+            // Drop the superseded edited copy (only files we created in our folder).
+            if (previous.StartsWith(dir, StringComparison.OrdinalIgnoreCase) && previous != edited)
+            {
+                try { File.Delete(previous); } catch { /* still locked; orphan is tiny */ }
+            }
             PdfModified = true;
             remap?.Invoke(doc);
             doc.TotalPageCount = _renderer.PageCount;
@@ -985,14 +1079,26 @@ public sealed class DocumentViewModel : ObservableObject
     private static void RunOnUi(Action action)
     {
         var app = Application.Current;
-        if (app?.Dispatcher != null && !app.Dispatcher.CheckAccess()) app.Dispatcher.Invoke(action);
-        else action();
+        if (app?.Dispatcher != null && !app.Dispatcher.CheckAccess())
+        {
+            // InvokeAsync, not Invoke: a synchronous Invoke from a timer/pool thread
+            // re-throws UI-handler exceptions on that thread, which is fatal there.
+            app.Dispatcher.InvokeAsync(action);
+        }
+        else
+        {
+            action();
+        }
     }
 
     private void BumpOverlay() => OverlayVersion++;
 
     private void NotifyDocumentDerived()
     {
+        // OcrDocument is not INPC, so XAML paths like Document.OcrPageCount only
+        // re-evaluate when Document itself is raised — without this, the review HUD
+        // never appears for pages OCR'd in-session.
+        OnPropertyChanged(nameof(Document));
         OnPropertyChanged(nameof(HasDocument));
         OnPropertyChanged(nameof(TotalPages));
         OnPropertyChanged(nameof(EngineShortLabel));

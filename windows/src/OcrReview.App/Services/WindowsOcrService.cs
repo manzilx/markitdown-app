@@ -15,29 +15,48 @@ public sealed class WindowsOcrService
 {
     // Lazy + guarded: WinRT activation must NOT run at app startup (it can fail to load
     // in a packaged/self-contained build and would crash the window before it appears).
-    private readonly Lazy<OcrEngine?> _engine = new(TryCreateEngine);
+    // Creation retries on every call while null, so installing an OCR language pack
+    // mid-session starts working without an app restart.
+    private OcrEngine? _engine;
+    private readonly object _engineGate = new();
+
+    /// <summary>OcrEngine does not support concurrent RecognizeAsync on one instance —
+    /// a background prefetch overlapping a user-triggered recognize fails with a WinRT
+    /// "method called at an unexpected time" error. Serialize all recognition.</summary>
+    private readonly SemaphoreSlim _recognizeGate = new(1, 1);
     private readonly ISpellChecker _spell;
 
     public WindowsOcrService(ISpellChecker spell) => _spell = spell;
 
-    public bool IsAvailable
-    {
-        get { try { return _engine.Value != null; } catch { return false; } }
-    }
+    public bool IsAvailable => GetEngine() != null;
 
-    private static OcrEngine? TryCreateEngine()
+    private OcrEngine? GetEngine()
     {
-        try { return OcrEngine.TryCreateFromUserProfileLanguages(); }
-        catch { return null; }
+        lock (_engineGate)
+        {
+            if (_engine != null) return _engine;
+            try { _engine = OcrEngine.TryCreateFromUserProfileLanguages(); }
+            catch { _engine = null; }
+            return _engine;
+        }
     }
 
     public async Task<OcrPage> RecognizeAsync(SoftwareBitmap bitmap, int pageNumber)
     {
-        var engine = _engine.Value
+        var engine = GetEngine()
             ?? throw new InvalidOperationException(
                 "Windows OCR is unavailable. Add an OCR language in Windows Settings → Time & language → Language & region.");
 
-        var result = await engine.RecognizeAsync(bitmap);
+        OcrResult result;
+        await _recognizeGate.WaitAsync();
+        try
+        {
+            result = await engine.RecognizeAsync(bitmap);
+        }
+        finally
+        {
+            _recognizeGate.Release();
+        }
         int width = bitmap.PixelWidth;
         int height = bitmap.PixelHeight;
 
