@@ -33,13 +33,16 @@ in CI on a non-Windows box). The **App** (WPF + WinRT) only builds on Windows.
 
 ## Getting the app
 
-The CI artifact is a **self-contained folder** (zipped). **Extract the zip fully**, then
-run **`OcrReview.exe`** from inside the extracted folder (the sibling DLLs must stay next
-to it). No .NET install is required.
+CI produces two artifacts — pick **portable** unless you have a reason not to:
+
+- **`OcrReview-win-x64-portable`** — a single `OcrReview.exe` with everything embedded.
+  Copy it anywhere, double-click, done. No .NET install, no sibling DLLs to lose.
+- **`OcrReview-win-x64`** — a self-contained folder (zipped). **Extract the zip fully**,
+  then run `OcrReview.exe` from inside the folder (the sibling DLLs must stay next to it).
 
 **Option A — GitHub Actions (no Windows machine needed).** Push the repo; the
 [`Windows app`](../.github/workflows/windows-build.yml) workflow builds on a
-`windows-latest` runner and uploads the `OcrReview-win-x64` artifact. Trigger it
+`windows-latest` runner and uploads both artifacts. Trigger it
 manually from the Actions tab (`workflow_dispatch`) too.
 
 **Option B — on a Windows machine** with the [.NET 8 SDK](https://dotnet.microsoft.com/download):
@@ -52,8 +55,9 @@ pwsh ./build.ps1
 
 ## Troubleshooting "it won't open"
 
-1. **Extract first.** Don't run `OcrReview.exe` from inside the zip viewer — extract the
-   whole folder, then launch it (the DLLs next to it are required).
+1. **Use the portable exe** (`OcrReview-win-x64-portable`) — it cannot suffer from
+   missing files. For the folder artifact: don't run `OcrReview.exe` from inside the zip
+   viewer — extract the whole folder, then launch it (the DLLs next to it are required).
 2. **SmartScreen.** The build is unsigned, so Windows shows *"Windows protected your PC"* →
    click **More info → Run anyway**. (Right-click the .exe → Properties → **Unblock** also helps.)
 3. **Antivirus** may quarantine a fresh unsigned .exe — check its quarantine/allow it.
