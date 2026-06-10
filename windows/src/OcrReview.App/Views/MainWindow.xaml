@@ -12,6 +12,7 @@
         <KeyBinding Modifiers="Control" Key="O" Command="{Binding OpenCommand}"/>
         <KeyBinding Modifiers="Control" Key="R" Command="{Binding RecognizePageCommand}"/>
         <KeyBinding Modifiers="Control" Key="F" Command="{Binding ToggleFindCommand}"/>
+        <KeyBinding Modifiers="Control+Shift" Key="D" Command="{Binding DenoiseCommand}"/>
         <KeyBinding Modifiers="Control" Key="K" Command="{Binding ShowPaletteCommand}"/>
         <KeyBinding Modifiers="Control+Shift" Key="E" Command="{Binding ExportMarkdownCommand}"/>
         <KeyBinding Modifiers="Control+Alt" Key="E" Command="{Binding ExportDocxCommand}"/>

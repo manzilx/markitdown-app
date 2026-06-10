@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.IO;
+using System.Text.Json;
 using System.Windows;
 using System.Windows.Media.Imaging;
 using Microsoft.Win32;
@@ -207,6 +208,8 @@ public sealed class DocumentViewModel : ObservableObject
     public RelayCommand SelectBlockCommand { get; private set; } = null!;
     public RelayCommand ApplySpellFixCommand { get; private set; } = null!;
     public RelayCommand OpenSettingsCommand { get; private set; } = null!;
+    public RelayCommand DenoiseCommand { get; private set; } = null!;
+    public RelayCommand UndoDenoiseCommand { get; private set; } = null!;
 
     private void BuildCommands()
     {
@@ -251,6 +254,8 @@ public sealed class DocumentViewModel : ObservableObject
         SelectBlockCommand = new RelayCommand(o => { if (o is Guid id) SelectBlock(id); });
         ApplySpellFixCommand = new RelayCommand(o => { if (o is SpellFixOption opt) ApplySpellFix(opt.Reference, opt.Suggestion); });
         OpenSettingsCommand = new RelayCommand(OpenSettings);
+        DenoiseCommand = new RelayCommand(Denoise, () => CanDenoise);
+        UndoDenoiseCommand = new RelayCommand(UndoDenoise, () => CanUndoDenoise);
     }
 
     // ---- Open / load ----
@@ -533,6 +538,68 @@ public sealed class DocumentViewModel : ObservableObject
         if (Document is { } doc) _jobStore.ScheduleSave(doc);
         RefreshFindResults();
         NotifyTextReplaced();
+    }
+
+    // ---- Denoise ----
+
+    public bool CanDenoise => (Document?.OcrPageCount ?? 0) > 0 && !IsProcessing;
+
+    private string? _denoiseUndoJson;
+    public bool CanUndoDenoise => _denoiseUndoJson != null;
+
+    private void Denoise()
+    {
+        if (Document is not { } document) return;
+        if (document.OcrPageCount == 0)
+        {
+            ErrorMessage = "Run OCR on at least one page before denoising.";
+            return;
+        }
+
+        var plan = DenoiseService.MakePlan(document);
+        if (plan.RemovedLineCount == 0)
+        {
+            MessageBox.Show("Denoise found no repeated headers, footers, or page numbers in the OCR'd pages.",
+                "Denoise", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var lines = plan.RemovedLineCount;
+        var pages = plan.AffectedPageCount;
+        var prompt =
+            $"Remove {lines} repeated header/footer/page-number line{(lines == 1 ? "" : "s")} " +
+            $"across {pages} page{(pages == 1 ? "" : "s")}?\n\n" +
+            $"Detected noise: {plan.CandidatePreview}\n\n" +
+            "This applies as editable text — use Undo Denoise or page-level Revert to restore the original OCR.";
+        if (MessageBox.Show(prompt, "Denoise OCR Text", MessageBoxButton.OKCancel, MessageBoxImage.Question)
+            != MessageBoxResult.OK) return;
+
+        // Whole-document snapshot for one-click undo (mirrors the macOS undo).
+        _denoiseUndoJson = JsonSerializer.Serialize(document);
+        OnPropertyChanged(nameof(CanUndoDenoise));
+
+        var result = DenoiseService.Apply(plan, document, plan.AllCandidateKeys);
+        SelectedBlockId = null;
+        _jobStore.Save(result.Document);
+        RefreshFindResults();
+        NotifyTextReplaced();
+        ErrorMessage = $"Denoise removed {lines} noisy line{(lines == 1 ? "" : "s")} across {pages} page{(pages == 1 ? "" : "s")}. Use Undo Denoise to restore.";
+    }
+
+    private void UndoDenoise()
+    {
+        if (_denoiseUndoJson is not { } json) return;
+        var restored = JsonSerializer.Deserialize<OcrDocument>(json);
+        _denoiseUndoJson = null;
+        OnPropertyChanged(nameof(CanUndoDenoise));
+        if (restored == null || Document?.Id != restored.Id) return;
+
+        Document = restored;
+        SelectedBlockId = null;
+        _jobStore.Save(restored);
+        RefreshFindResults();
+        NotifyTextReplaced();
+        ErrorMessage = "Denoise undone — original OCR text restored.";
     }
 
     public void ApplySpellFix(SpellSuggestionRef reference, string replacement)
@@ -873,6 +940,8 @@ public sealed class DocumentViewModel : ObservableObject
         Add("Copy Page Text", "", "Export", null, hasDoc, () => SetClipboard(CurrentPage?.ExportText ?? ""));
         Add("Copy All Text", "", "Export", null, hasDoc, () => SetClipboard(Document is { } d ? ExportService.PlainText(d, TotalPages) : ""));
         Add("Find & Replace", "", "Edit", "Ctrl+F", hasDoc, () => { IsFindVisible = true; RefreshFindResults(); });
+        Add("Denoise Repeated Headers/Footers…", "", "Edit", "Ctrl+Shift+D", CanDenoise, Denoise);
+        if (CanUndoDenoise) Add("Undo Denoise", "", "Edit", null, true, UndoDenoise);
         Add("Next Issue", "", "Review", "Alt+Down", HasReviewIssues, GoToNextIssue);
         Add("Previous Issue", "", "Review", "Alt+Up", HasReviewIssues, GoToPreviousIssue);
         Add(ShowHeatmap ? "Hide Confidence Heatmap" : "Show Confidence Heatmap", "", "Review", "Ctrl+Alt+H", hasDoc, () => ShowHeatmap = !ShowHeatmap);

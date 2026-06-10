@@ -28,6 +28,10 @@
                     <Button Style="{StaticResource IconButton}" Command="{Binding ToggleFindCommand}" ToolTip="Find &amp; replace (Ctrl+F)">
                         <TextBlock Text="&#xE721;" FontFamily="Segoe MDL2 Assets"/>
                     </Button>
+                    <Button Style="{StaticResource IconButton}" Command="{Binding DenoiseCommand}"
+                            ToolTip="Denoise — remove repeated headers, footers &amp; page numbers (Ctrl+Shift+D)">
+                        <TextBlock Text="&#xE75C;" FontFamily="Segoe MDL2 Assets"/>
+                    </Button>
 
                     <!-- Recognize -->
                     <Grid Margin="6,0,0,0">
