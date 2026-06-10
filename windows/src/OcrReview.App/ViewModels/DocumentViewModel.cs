@@ -879,7 +879,12 @@ public sealed class DocumentViewModel : ObservableObject
         if (await _sidecar.IsAvailableAsync()) return;
         await _sidecarManager.EnsureRunningAsync();
         if (!await _sidecar.IsAvailableAsync())
-            throw new SidecarException("The Python sidecar is not running. Check the project path in Settings, or run: uv run uvicorn markitdown_api.main:app --port 8001 --app-dir api");
+            throw new SidecarException(
+                "This feature needs the optional Python helper, which isn't set up on this PC.\n\n" +
+                "Word (.docx) export, searchable-PDF export, and the advanced cloud OCR engines use it. " +
+                "Everything else — recognizing text, editing, denoise, and exporting to Markdown, plain text, or RTF — works without it.\n\n" +
+                "To enable it, install it from the project folder and set that folder under Settings → Python helper. " +
+                "(Developers: run \"uv run uvicorn markitdown_api.main:app --port 8001 --app-dir api\".)");
     }
 
     // ---- Settings ----
