@@ -60,31 +60,75 @@ public sealed class SidecarProcessManager
 
     private void Start()
     {
-        var root = ResolveProjectRoot();
-        if (root == null)
+        // Preferred: a bundled ocr-sidecar.exe shipped next to the app — zero setup,
+        // no Python/uv/project needed by the end user.
+        if (ResolveBundledSidecar() is { } sidecarExe)
         {
-            StatusMessage = "MarkItDown project not found. Set the project path in Settings.";
+            StartProcess(new ProcessStartInfo
+            {
+                FileName = sidecarExe,
+                Arguments = "--port 8001",
+                WorkingDirectory = Path.GetDirectoryName(sidecarExe) ?? AppContext.BaseDirectory,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            }, "Starting bundled sidecar…");
             return;
         }
 
-        var psi = new ProcessStartInfo
+        // Fallback (developers): run from a checked-out project via uv.
+        var root = ResolveProjectRoot();
+        if (root == null)
+        {
+            StatusMessage = "MarkItDown helper not found next to the app, and no project path is set in Settings.";
+            return;
+        }
+
+        StartProcess(new ProcessStartInfo
         {
             FileName = ResolveUv(),
             Arguments = "run uvicorn markitdown_api.main:app --host 127.0.0.1 --port 8001 --app-dir api",
             WorkingDirectory = root,
             UseShellExecute = false,
             CreateNoWindow = true,
-        };
+        }, "Starting sidecar…");
+    }
 
+    private void StartProcess(ProcessStartInfo psi, string startingMessage)
+    {
         try
         {
             _process = Process.Start(psi);
-            StatusMessage = "Starting sidecar…";
+            StatusMessage = startingMessage;
         }
         catch (Exception ex)
         {
             StatusMessage = "Failed to launch sidecar: " + ex.Message;
         }
+    }
+
+    /// <summary>Find a bundled <c>ocr-sidecar.exe</c>. Checks the app folder (folder
+    /// publish) and the directory the user actually launched (portable single-file,
+    /// whose extraction dir differs from the on-disk exe location), plus a "sidecar"
+    /// subfolder of each.</summary>
+    private static string? ResolveBundledSidecar()
+    {
+        var roots = new List<string> { AppContext.BaseDirectory };
+        try
+        {
+            if (Path.GetDirectoryName(Environment.ProcessPath) is { Length: > 0 } procDir)
+                roots.Add(procDir);
+        }
+        catch { /* ProcessPath can be null in odd hosts */ }
+
+        foreach (var root in roots)
+        {
+            foreach (var relative in new[] { "ocr-sidecar.exe", Path.Combine("sidecar", "ocr-sidecar.exe") })
+            {
+                var path = Path.Combine(root, relative);
+                if (File.Exists(path)) return path;
+            }
+        }
+        return null;
     }
 
     public void Stop()

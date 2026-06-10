@@ -33,12 +33,21 @@ in CI on a non-Windows box). The **App** (WPF + WinRT) only builds on Windows.
 
 ## Getting the app
 
-CI produces two artifacts — pick **portable** unless you have a reason not to:
+CI produces two artifacts. **Both now include the optional Python helper
+(`ocr-sidecar.exe`)**, so Word (.docx) export, searchable-PDF export, and the advanced
+cloud OCR engines work with **zero setup** — the app auto-launches the helper sitting
+next to `OcrReview.exe`. No Python, uv, or project checkout needed.
 
-- **`OcrReview-win-x64-portable`** — a single `OcrReview.exe` with everything embedded.
-  Copy it anywhere, double-click, done. No .NET install, no sibling DLLs to lose.
-- **`OcrReview-win-x64`** — a self-contained folder (zipped). **Extract the zip fully**,
-  then run `OcrReview.exe` from inside the folder (the sibling DLLs must stay next to it).
+- **`OcrReview-win-x64-portable`** — `OcrReview.exe` + `ocr-sidecar.exe` (two files; keep
+  them in the same folder). `OcrReview.exe` is still a single self-contained .NET app — no
+  install, no DLLs to lose — and the helper is an optional companion. Delete the helper if
+  you only need OCR + Markdown/Text/RTF and want one file.
+- **`OcrReview-win-x64`** — the full self-contained folder (zipped), helper included.
+  **Extract the zip fully**, then run `OcrReview.exe` from inside the folder.
+
+> The .NET runtime can't be merged with a Python runtime into one literal file, so the
+> helper ships as a sibling `.exe` rather than being fused into `OcrReview.exe`. Core OCR,
+> editing, denoise, and Markdown/Text/RTF export never need it.
 
 **Option A — GitHub Actions (no Windows machine needed).** Push the repo; the
 [`Windows app`](../.github/workflows/windows-build.yml) workflow builds on a

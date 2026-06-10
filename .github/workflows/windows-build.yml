@@ -34,6 +34,24 @@ jobs:
       - name: Test (Core)
         run: dotnet test tests/OcrReview.Core.Tests/OcrReview.Core.Tests.csproj -c Release --no-restore
 
+      # Build the optional Python helper into a standalone ocr-sidecar.exe so Word and
+      # searchable-PDF export work with zero setup on the end user's PC (no Python/uv).
+      - name: Set up Python 3.12 (for the bundled helper)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Build bundled sidecar (ocr-sidecar.exe)
+        working-directory: ${{ github.workspace }}
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip uv
+          uv sync --python 3.12
+          uv pip install pyinstaller
+          uv run pyinstaller scripts/ocr-sidecar.spec --noconfirm --distpath dist-sidecar --workpath .pyinstaller-build
+          if (!(Test-Path dist-sidecar/ocr-sidecar.exe)) { throw "sidecar build failed — ocr-sidecar.exe not found" }
+          "sidecar: {0:N1} MB" -f ((Get-Item dist-sidecar/ocr-sidecar.exe).Length / 1MB)
+
       # Primary artifact: ONE self-contained OcrReview.exe with everything embedded.
       # It survives being copied/moved/mailed on its own — there is no folder of DLLs
       # to lose, and no .NET install is needed.
@@ -56,18 +74,30 @@ jobs:
           -c Release -r win-x64 --self-contained true
           -o publish
 
+      # Drop the helper next to OcrReview.exe in both layouts. The app auto-launches a
+      # sibling ocr-sidecar.exe, so Word + searchable-PDF export work with no setup.
+      - name: Bundle sidecar into both artifacts
+        shell: pwsh
+        run: |
+          Copy-Item ../dist-sidecar/ocr-sidecar.exe publish/ -Force
+          Copy-Item ../dist-sidecar/ocr-sidecar.exe publish-single/ -Force
+
       - name: Smoke-check artifacts
         shell: pwsh
         run: |
           if (!(Test-Path publish-single/OcrReview.exe)) { throw "single-file exe missing" }
+          if (!(Test-Path publish-single/ocr-sidecar.exe)) { throw "portable sidecar missing" }
           if (!(Test-Path publish/OcrReview.exe)) { throw "folder exe missing" }
-          "single-file exe: {0:N1} MB" -f ((Get-Item publish-single/OcrReview.exe).Length / 1MB)
+          if (!(Test-Path publish/ocr-sidecar.exe)) { throw "folder sidecar missing" }
+          "portable exe: {0:N1} MB" -f ((Get-Item publish-single/OcrReview.exe).Length / 1MB)
 
-      - name: Upload portable exe
+      # Portable = OcrReview.exe + ocr-sidecar.exe (keep the two together). The .NET app
+      # is still a single self-contained exe; the helper is an optional companion.
+      - name: Upload portable (app + helper)
         uses: actions/upload-artifact@v7
         with:
           name: OcrReview-win-x64-portable
-          path: windows/publish-single/OcrReview.exe
+          path: windows/publish-single
           if-no-files-found: error
 
       - name: Upload app folder
