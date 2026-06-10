@@ -3,6 +3,7 @@ using System.IO;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 using Microsoft.Win32;
 using OcrReview.App.Services;
 using OcrReview.Core;
@@ -20,6 +21,13 @@ public sealed class DocumentViewModel : ObservableObject
     private readonly SidecarClient _sidecar;
     private readonly SidecarProcessManager _sidecarManager;
     private readonly PdfRenderService _renderer = new();
+    // A SECOND renderer (own PdfDocument + lock) just for thumbnails, so scrolling the
+    // strip never blocks the main page render — the old shared lock serialized every
+    // thumbnail behind the page the user is actually looking at.
+    private readonly PdfRenderService _thumbRenderer = new();
+    private Task _thumbReady = Task.CompletedTask;
+    private readonly Dictionary<int, BitmapSource> _thumbCache = new();
+    private const double ThumbWidth = 150;
     private readonly ISpellChecker _spell = new HunspellSpellChecker();
     private readonly WindowsOcrService _ocr;
     private readonly JobStore _jobStore = new();
@@ -75,7 +83,7 @@ public sealed class DocumentViewModel : ObservableObject
     public bool IsFindVisible { get => _isFindVisible; set => SetProperty(ref _isFindVisible, value); }
 
     private string _findText = "";
-    public string FindText { get => _findText; set { if (SetProperty(ref _findText, value)) RefreshFindResults(); } }
+    public string FindText { get => _findText; set { if (SetProperty(ref _findText, value)) ScheduleFindRefresh(); } }
 
     private string _replaceText = "";
     public string ReplaceText { get => _replaceText; set => SetProperty(ref _replaceText, value); }
@@ -94,7 +102,7 @@ public sealed class DocumentViewModel : ObservableObject
     public Guid? SelectedBlockId { get => _selectedBlockId; private set { if (SetProperty(ref _selectedBlockId, value)) NotifySelectionDerived(); } }
 
     private bool _showHeatmap;
-    public bool ShowHeatmap { get => _showHeatmap; set { if (SetProperty(ref _showHeatmap, value)) BumpOverlay(); } }
+    public bool ShowHeatmap { get => _showHeatmap; set { if (SetProperty(ref _showHeatmap, value)) RestyleOverlay(); } }
 
     private bool _isCommandPaletteVisible;
     public bool IsCommandPaletteVisible { get => _isCommandPaletteVisible; set => SetProperty(ref _isCommandPaletteVisible, value); }
@@ -106,16 +114,45 @@ public sealed class DocumentViewModel : ObservableObject
     public double ZoomLevel { get => _zoomLevel; private set { if (SetProperty(ref _zoomLevel, value)) OnPropertyChanged(nameof(ZoomPercent)); } }
     public int ZoomPercent => (int)Math.Round(_zoomLevel * 100);
 
+    // Two overlay signals: structural (page/blocks changed → rebuild rectangles) vs
+    // style (selection/heatmap/redaction changed → recolor existing rectangles). The
+    // view rebuilds on the former and only restyles on the latter — typing and
+    // selecting no longer tear down and re-allocate the whole rectangle set.
     private int _overlayVersion;
     public int OverlayVersion { get => _overlayVersion; private set => SetProperty(ref _overlayVersion, value); }
+
+    private int _overlayStyleVersion;
+    public int OverlayStyleVersion { get => _overlayStyleVersion; private set => SetProperty(ref _overlayStyleVersion, value); }
 
     // ---- Derived ----
 
     public int TotalPages => _renderer.HasDocument ? _renderer.PageCount : (_document?.TotalPageCount ?? 1);
     public OcrPage? CurrentPage => _document?.Page(CurrentPageIndex + 1);
-    public IReadOnlyList<OcrBlock> CurrentBlocks => CurrentPage?.Blocks.Where(b => b.BboxNormalized != null).ToList() ?? new List<OcrBlock>();
-    public IReadOnlyList<OcrBlock> LowConfidenceBlocks => CurrentPage?.LowConfidenceBlocks.ToList() ?? new List<OcrBlock>();
-    public HashSet<Guid> CurrentRedactedBlockIds => new((CurrentPage?.Blocks ?? new()).Where(b => b.IsRedacted).Select(b => b.Id));
+
+    // Per-page derived collections are memoized: each is bound multiple times (ItemsSource
+    // + a .Count for Visibility), and WPF would otherwise re-run the LINQ on every access.
+    // Caches are dropped whenever the page changes or its blocks/text change.
+    private IReadOnlyList<OcrBlock>? _cachedCurrentBlocks;
+    private IReadOnlyList<OcrBlock>? _cachedLowConf;
+    private HashSet<Guid>? _cachedRedacted;
+    private IReadOnlyList<SpellSuggestionRef>? _cachedSpell;
+
+    public IReadOnlyList<OcrBlock> CurrentBlocks =>
+        _cachedCurrentBlocks ??= CurrentPage?.Blocks.Where(b => b.BboxNormalized != null).ToList() ?? new List<OcrBlock>();
+    public IReadOnlyList<OcrBlock> LowConfidenceBlocks =>
+        _cachedLowConf ??= CurrentPage?.LowConfidenceBlocks.ToList() ?? new List<OcrBlock>();
+    public HashSet<Guid> CurrentRedactedBlockIds =>
+        _cachedRedacted ??= new((CurrentPage?.Blocks ?? new()).Where(b => b.IsRedacted).Select(b => b.Id));
+
+    private void InvalidatePageCaches()
+    {
+        _cachedCurrentBlocks = null;
+        _cachedLowConf = null;
+        _cachedRedacted = null;
+        _cachedSpell = null;
+    }
+
+    private void InvalidateSpellCache() => _cachedSpell = null;
 
     public string EngineShortLabel => EngineCatalog.ShortLabel(_document?.Engine ?? _settings.Engine);
     public bool EngineIsLocal => EngineCatalog.IsLocal(_document?.Engine ?? _settings.Engine);
@@ -140,14 +177,17 @@ public sealed class DocumentViewModel : ObservableObject
     {
         get
         {
+            // Memoized: bound twice (ItemsSource + .Count), and each Hunspell Suggest()
+            // is costly. Recomputed only when the selection or edited text changes.
+            if (_cachedSpell != null) return _cachedSpell;
             var blocks = _selectedBlockId is { } id && CurrentPage?.Blocks.FirstOrDefault(b => b.Id == id) is { } b
                 ? new List<OcrBlock> { b }
-                : LowConfidenceBlocks.ToList();
+                : LowConfidenceBlocks;
             var refs = new List<SpellSuggestionRef>();
             foreach (var block in blocks)
                 foreach (var issue in _spell.Issues(block.Text))
                     refs.Add(new SpellSuggestionRef(block.Id, issue));
-            return refs;
+            return _cachedSpell = refs;
         }
     }
 
@@ -283,6 +323,7 @@ public sealed class DocumentViewModel : ObservableObject
         try
         {
             await _renderer.LoadAsync(path);
+            ReloadThumbnails(path);
             _sourcePath = path;
             _isPdf = _renderer.IsPdf;
             PdfModified = false;
@@ -330,6 +371,7 @@ public sealed class DocumentViewModel : ObservableObject
             _denoiseUndoJson = null;
             OnPropertyChanged(nameof(CanUndoDenoise));
             await _renderer.LoadAsync(recent.SourcePath);
+            ReloadThumbnails(recent.SourcePath);
             _sourcePath = recent.SourcePath;
             _isPdf = _renderer.IsPdf;
             PdfModified = false;
@@ -364,7 +406,7 @@ public sealed class DocumentViewModel : ObservableObject
     private async Task RenderCurrentPageAsync()
     {
         CurrentPageImage = await _renderer.RenderPageAsync(CurrentPageIndex, RenderWidth);
-        BumpOverlay();
+        RebuildOverlay();
     }
 
     public void GoToPage(int index)
@@ -531,7 +573,11 @@ public sealed class DocumentViewModel : ObservableObject
         doc.Pages.Add(page);
         doc.Pages.Sort((a, b) => a.PageNumber.CompareTo(b.PageNumber));
         _jobStore.ScheduleSave(doc);
-        NotifyDocumentDerived();
+        // A prefetch is for a NON-current page and lands while the user may be typing on
+        // the current page. Only refresh document-level badges/counts — raising the
+        // page-derived properties (CurrentText) would yank the caret mid-edit.
+        if (page.PageNumber == CurrentPageIndex + 1) NotifyDocumentDerived();
+        else NotifyDocumentStats();
     }
 
     // ---- Editing ----
@@ -545,8 +591,10 @@ public sealed class DocumentViewModel : ObservableObject
         if (page != null) page.SetDisplayText(text);
         else { doc.Pages.Add(new OcrPage { PageNumber = pageNumber, OcrText = "", EditedText = text }); doc.Pages.Sort((a, b) => a.PageNumber.CompareTo(b.PageNumber)); }
         _jobStore.ScheduleSave(doc);
-        RefreshFindResults();
-        NotifyEditDerived();
+        ScheduleFindRefresh();
+        // Editing whole-page text changes neither block geometry, confidence, nor the
+        // low-confidence block set — only whether the page has edits.
+        OnPropertyChanged(nameof(CanRevertSelection));
     }
 
     private void UpdateBlockText(Guid blockId, string text)
@@ -557,8 +605,12 @@ public sealed class DocumentViewModel : ObservableObject
         block.Text = text;
         page.SyncEditedTextFromBlocks();
         if (Document is { } doc) _jobStore.ScheduleSave(doc);
-        RefreshFindResults();
-        NotifyEditDerived();
+        ScheduleFindRefresh();
+        // The selected block's text changed → its spell suggestions may change; nothing
+        // else (geometry, confidence, the block list) does.
+        InvalidateSpellCache();
+        OnPropertyChanged(nameof(ActiveSpellIssues));
+        OnPropertyChanged(nameof(CanRevertSelection));
     }
 
     public void SelectBlock(Guid? id)
@@ -732,9 +784,31 @@ public sealed class DocumentViewModel : ObservableObject
 
     public void RefreshFindResults()
     {
+        // When Find is closed, never scan the document — editing used to trigger a
+        // full O(document) rescan on every keystroke via the edit paths below.
+        if (!IsFindVisible) { if (FindMatches.Count > 0) FindMatches = new(); return; }
         if (Document is not { } doc) { FindMatches = new(); CurrentFindMatchIndex = 0; return; }
         FindMatches = FindService.Find(doc, FindText);
         if (FindMatches.Count == 0 || CurrentFindMatchIndex >= FindMatches.Count) CurrentFindMatchIndex = 0;
+    }
+
+    /// <summary>Debounced find — typing in the find box (or editing while Find is open)
+    /// coalesces rescans instead of running one per keystroke.</summary>
+    private DispatcherTimer? _findDebounce;
+    private void ScheduleFindRefresh()
+    {
+        if (!IsFindVisible) return;
+        _findDebounce ??= new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(180) };
+        _findDebounce.Tick -= OnFindDebounceTick;
+        _findDebounce.Tick += OnFindDebounceTick;
+        _findDebounce.Stop();
+        _findDebounce.Start();
+    }
+
+    private void OnFindDebounceTick(object? sender, EventArgs e)
+    {
+        _findDebounce?.Stop();
+        RefreshFindResults();
     }
 
     private void FindNext()
@@ -937,6 +1011,7 @@ public sealed class DocumentViewModel : ObservableObject
             edit(edited);
             var previous = _sourcePath;
             await _renderer.LoadAsync(edited);
+            ReloadThumbnails(edited);
             _sourcePath = edited;
             doc.SourcePath = edited;
             // Drop the superseded edited copy (only files we created in our folder).
@@ -963,7 +1038,36 @@ public sealed class DocumentViewModel : ObservableObject
 
     // ---- Rendering helpers for the page view ----
 
-    public Task<BitmapSource?> RenderThumbnailAsync(int index) => _renderer.RenderPageAsync(index, 150);
+    public async Task<BitmapSource?> RenderThumbnailAsync(int index)
+    {
+        if (_thumbCache.TryGetValue(index, out var hit)) return hit;
+        try
+        {
+            await _thumbReady;
+            var image = await _thumbRenderer.RenderPageAsync(index, ThumbWidth);
+            if (image != null)
+            {
+                // Bound the cache so huge documents don't accumulate every thumbnail.
+                if (_thumbCache.Count > 400) _thumbCache.Clear();
+                _thumbCache[index] = image;
+            }
+            return image;
+        }
+        catch
+        {
+            // Fall back to the main renderer if the thumbnail document failed to load.
+            try { return await _renderer.RenderPageAsync(index, ThumbWidth); }
+            catch { return null; }
+        }
+    }
+
+    /// <summary>Point the thumbnail renderer at the current file (in the background) and
+    /// drop cached thumbnails. Cheap no-op for images.</summary>
+    private void ReloadThumbnails(string path)
+    {
+        _thumbCache.Clear();
+        _thumbReady = _thumbRenderer.LoadAsync(path);
+    }
 
     // ---- Sidecar ----
 
@@ -1100,9 +1204,18 @@ public sealed class DocumentViewModel : ObservableObject
         }
     }
 
-    private void BumpOverlay() => OverlayVersion++;
+    private void RebuildOverlay() => OverlayVersion++;
+    private void RestyleOverlay() => OverlayStyleVersion++;
 
     private void NotifyDocumentDerived()
+    {
+        NotifyDocumentStats();
+        NotifyPageDerived();
+    }
+
+    /// <summary>Document-level aggregates only (HUD, coverage, thumbnail badges) — no
+    /// current-page/editor properties, so it's safe to fire while the user is typing.</summary>
+    private void NotifyDocumentStats()
     {
         // OcrDocument is not INPC, so XAML paths like Document.OcrPageCount only
         // re-evaluate when Document itself is raised — without this, the review HUD
@@ -1118,11 +1231,11 @@ public sealed class DocumentViewModel : ObservableObject
         OnPropertyChanged(nameof(OcrPageNumbers));
         OnPropertyChanged(nameof(IssuePageNumbers));
         OnPropertyChanged(nameof(PartialOcr));
-        NotifyPageDerived();
     }
 
     private void NotifyPageDerived()
     {
+        InvalidatePageCaches();
         OnPropertyChanged(nameof(CurrentPage));
         OnPropertyChanged(nameof(CurrentBlocks));
         OnPropertyChanged(nameof(LowConfidenceBlocks));
@@ -1131,17 +1244,20 @@ public sealed class DocumentViewModel : ObservableObject
         OnPropertyChanged(nameof(CurrentPagePlaceholder));
         OnPropertyChanged(nameof(ActiveSpellIssues));
         OnPropertyChanged(nameof(CanRevertSelection));
-        BumpOverlay();
+        RebuildOverlay();
     }
 
     private void NotifySelectionDerived()
     {
+        // Selection only restyles the overlay (geometry is unchanged) and re-scopes the
+        // spell panel to the selected block — no page-collection rebuild needed.
+        InvalidateSpellCache();
         OnPropertyChanged(nameof(CurrentText));
         OnPropertyChanged(nameof(EditorModeLabel));
         OnPropertyChanged(nameof(IsSelectedRegionRedacted));
         OnPropertyChanged(nameof(CanRevertSelection));
         OnPropertyChanged(nameof(ActiveSpellIssues));
-        BumpOverlay();
+        RestyleOverlay();
     }
 
     /// <summary>
@@ -1151,6 +1267,10 @@ public sealed class DocumentViewModel : ObservableObject
     /// </summary>
     private void NotifyEditDerived()
     {
+        // Programmatic changes only (revert / replace / spell-fix / redaction) — not the
+        // per-keystroke path. Block geometry never changes here, so the overlay only
+        // needs a restyle (e.g. redaction fill), not a full rebuild.
+        InvalidatePageCaches();
         OnPropertyChanged(nameof(CurrentBlocks));
         OnPropertyChanged(nameof(CurrentRedactedBlockIds));
         OnPropertyChanged(nameof(LowConfidenceBlocks));
@@ -1160,7 +1280,7 @@ public sealed class DocumentViewModel : ObservableObject
         OnPropertyChanged(nameof(ReviewSummary));
         OnPropertyChanged(nameof(IssuePageNumbers));
         OnPropertyChanged(nameof(CanRevertSelection));
-        BumpOverlay();
+        RestyleOverlay();
     }
 
     /// <summary>For programmatic text changes (spell fix, revert, replace) — also refreshes the editor.</summary>

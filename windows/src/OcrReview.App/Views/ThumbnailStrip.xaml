@@ -7,6 +7,8 @@
                        Foreground="{StaticResource DimBrush}" Margin="16,8,0,0"/>
             <ListBox x:Name="List" Background="Transparent" BorderThickness="0" Margin="8,4,8,8"
                      ScrollViewer.HorizontalScrollBarVisibility="Auto" ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                     VirtualizingStackPanel.IsVirtualizing="True"
+                     VirtualizingStackPanel.VirtualizationMode="Recycling"
                      SelectionChanged="OnSelectionChanged">
                 <ListBox.ItemsPanel>
                     <ItemsPanelTemplate>
@@ -27,7 +29,7 @@
                 </ListBox.ItemContainerStyle>
                 <ListBox.ItemTemplate>
                     <DataTemplate>
-                        <StackPanel Loaded="OnThumbLoaded" Cursor="Hand">
+                        <StackPanel Loaded="OnThumbLoaded" DataContextChanged="OnThumbDataContextChanged" Cursor="Hand">
                             <Border Width="62" Height="80" CornerRadius="6" Background="{StaticResource SurfaceElevatedBrush}"
                                     BorderThickness="2">
                                 <Border.Style>

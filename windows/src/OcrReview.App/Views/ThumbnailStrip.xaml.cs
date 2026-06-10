@@ -102,11 +102,16 @@ public partial class ThumbnailStrip : UserControl
         if (List.SelectedIndex >= 0) _vm.GoToPage(List.SelectedIndex);
     }
 
-    private async void OnThumbLoaded(object sender, RoutedEventArgs e)
+    // Fired on first realization. With container recycling, the SAME panel is reused
+    // for different pages as they scroll in — Loaded won't re-fire, so DataContextChanged
+    // drives subsequent renders.
+    private void OnThumbLoaded(object sender, RoutedEventArgs e) => EnsureThumb(sender);
+    private void OnThumbDataContextChanged(object sender, DependencyPropertyChangedEventArgs e) => EnsureThumb(sender);
+
+    private async void EnsureThumb(object sender)
     {
-        // async void: a damaged page throws from the renderer, and virtualization
-        // re-fires Loaded every time the container scrolls into view — without this
-        // guard one bad page means a crash dialog on every scroll. Show a blank thumb.
+        // async void: a damaged page throws from the renderer. Without this guard one
+        // bad page would crash-dialog on every scroll. Cached pages return instantly.
         try
         {
             if (sender is FrameworkElement { DataContext: ThumbItem item } && item.Image == null && _vm != null)
@@ -117,8 +122,8 @@ public partial class ThumbnailStrip : UserControl
         }
         catch
         {
-            // Leave the placeholder; the page view will surface a real error if the
-            // user actually navigates to this page.
+            // Leave the placeholder; the page view surfaces a real error if the user
+            // actually navigates to this page.
         }
     }
 
