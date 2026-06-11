@@ -8,10 +8,15 @@ on:
   push:
     paths:
       - 'windows/**'
+      # The bundled ocr-sidecar.exe is built from the Python API + spec, so changes
+      # there must rebuild the Windows artifacts too.
+      - 'api/**'
+      - 'scripts/ocr-sidecar.spec'
       - '.github/workflows/windows-build.yml'
   pull_request:
     paths:
       - 'windows/**'
+      - 'api/**'
   workflow_dispatch:
 
 jobs:
