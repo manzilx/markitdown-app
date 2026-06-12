@@ -4,6 +4,7 @@ import PDFKit
 enum BBoxCoordinateMapper {
     /// Vision normalized bbox → PDF page rect (origin bottom-left).
     static func pageRect(from bbox: [Double], mediaBox: CGRect) -> CGRect {
+        guard bbox.count >= 4 else { return .zero }
         let minX = bbox[0] * mediaBox.width + mediaBox.minX
         let minY = bbox[1] * mediaBox.height + mediaBox.minY
         let width = bbox[2] * mediaBox.width
@@ -17,6 +18,7 @@ enum BBoxCoordinateMapper {
         contentSize: CGSize,
         viewSize: CGSize
     ) -> CGRect {
+        guard bbox.count >= 4 else { return .zero }
         let scale = min(viewSize.width / max(contentSize.width, 1), viewSize.height / max(contentSize.height, 1))
         let drawnWidth = contentSize.width * scale
         let drawnHeight = contentSize.height * scale

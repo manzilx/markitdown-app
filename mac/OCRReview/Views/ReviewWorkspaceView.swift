@@ -2,6 +2,12 @@ import SwiftUI
 
 struct ReviewWorkspaceView: View {
     @ObservedObject var model: DocumentViewModel
+    /// Acrobat-style left pages panel; persisted across launches.
+    @AppStorage("ocrreview.pagesSidebar") private var pagesSidebarVisible = false
+
+    private var showsSidebar: Bool {
+        pagesSidebarVisible && model.totalPages > 1
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -15,6 +21,21 @@ struct ReviewWorkspaceView: View {
             }
 
             HSplitView {
+                if showsSidebar {
+                    PageThumbnailStrip(
+                        axis: .vertical,
+                        totalPages: model.totalPages,
+                        currentPageIndex: $model.currentPageIndex,
+                        document: model.pdfDocument,
+                        ocrPageNumbers: model.ocrPageNumbers,
+                        issuePageNumbers: model.issuePageNumbers,
+                        failedPageNumbers: model.failedPageNumbers,
+                        onMovePage: { from, to in model.movePage(from: from, to: to) },
+                        onRotatePage: { index, clockwise in model.rotatePage(at: index, clockwise: clockwise) },
+                        onDeletePage: { index in model.deletePage(at: index) }
+                    )
+                    .frame(minWidth: 124, idealWidth: 140, maxWidth: 200)
+                }
                 pagePane
                     .frame(minWidth: 380)
                 OCRTextEditorView(
@@ -36,7 +57,7 @@ struct ReviewWorkspaceView: View {
                 .frame(minWidth: 340)
             }
 
-            if model.totalPages > 1 {
+            if model.totalPages > 1 && !showsSidebar {
                 Divider().overlay(Theme.hairline)
                 PageThumbnailStrip(
                     totalPages: model.totalPages,
@@ -44,17 +65,21 @@ struct ReviewWorkspaceView: View {
                     document: model.pdfDocument,
                     ocrPageNumbers: model.ocrPageNumbers,
                     issuePageNumbers: model.issuePageNumbers,
+                    failedPageNumbers: model.failedPageNumbers,
                     onMovePage: { from, to in model.movePage(from: from, to: to) },
                     onRotatePage: { index, clockwise in model.rotatePage(at: index, clockwise: clockwise) },
                     onDeletePage: { index in model.deletePage(at: index) }
                 )
-                .onChange(of: model.currentPageIndex) { _, newIndex in
-                    Task { await model.ensurePageRecognized(at: newIndex) }
-                }
             }
+        }
+        .onChange(of: model.currentPageIndex) { _, newIndex in
+            Task { await model.ensurePageRecognized(at: newIndex) }
         }
         .background(Theme.bg)
         .animation(Theme.Motion.snappy, value: model.isFindVisible)
+        .sheet(item: $model.denoisePreview) { _ in
+            DenoisePreviewSheet(model: model)
+        }
     }
 
     // MARK: - Toolbar
@@ -65,7 +90,19 @@ struct ReviewWorkspaceView: View {
                 .buttonStyle(ToolbarIconButtonStyle())
                 .help("Back to library")
 
+            if model.totalPages > 1 {
+                Button {
+                    withAnimation(Theme.Motion.snappy) { pagesSidebarVisible.toggle() }
+                } label: { Image(systemName: "sidebar.left") }
+                    .buttonStyle(ToolbarIconButtonStyle(active: pagesSidebarVisible))
+                    .help("Toggle pages sidebar")
+            }
+
             titleBlock
+
+            if model.totalPages > 1 {
+                coverageHUD
+            }
 
             Spacer(minLength: Theme.Spacing.md)
 
@@ -140,6 +177,34 @@ struct ReviewWorkspaceView: View {
         .panelBackground(radius: Theme.Radius.md, fill: Theme.bg, stroke: Theme.border)
     }
 
+    private var coverageHUD: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Image(systemName: model.remainingOCRPageCount == 0 ? "checkmark.circle.fill" : "text.viewfinder")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(model.remainingOCRPageCount == 0 ? Theme.success : Theme.warning)
+                Text(model.ocrCoverageLabel)
+                    .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                    .foregroundStyle(Theme.textSecondary)
+            }
+            ProgressView(value: model.ocrCoverageFraction)
+                .progressViewStyle(.linear)
+                .tint(model.remainingOCRPageCount == 0 ? Theme.success : Theme.warning)
+                .frame(width: 118)
+        }
+        .padding(.horizontal, Theme.Spacing.md)
+        .padding(.vertical, 7)
+        .background(
+            RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous)
+                .fill(Theme.bg.opacity(0.75))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous)
+                .strokeBorder(Theme.hairline, lineWidth: 1)
+        )
+        .help(model.exportStatusLabel)
+    }
+
     private var reviewHUD: some View {
         HStack(spacing: 4) {
             Button { model.goToPreviousIssue() } label: { Image(systemName: "chevron.up") }
@@ -173,12 +238,30 @@ struct ReviewWorkspaceView: View {
         HStack(spacing: Theme.Spacing.sm) {
             ProgressView(value: model.progress)
                 .frame(width: 90)
-            Text("\(Int(model.progress * 100))%")
-                .font(.system(size: 11, weight: .semibold).monospacedDigit())
+            VStack(alignment: .leading, spacing: 1) {
+                Text(model.processingMessage.isEmpty ? "Working…" : model.processingMessage)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Theme.text)
+                    .lineLimit(1)
+                Text("\(Int(model.progress * 100))%")
+                    .font(.system(size: 10, weight: .semibold).monospacedDigit())
+                    .foregroundStyle(Theme.textSecondary)
+            }
+            if model.currentOperationCanCancel {
+                Button {
+                    model.cancelCurrentOperation()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 9, weight: .bold))
+                        .frame(width: 18, height: 18)
+                }
+                .buttonStyle(.plain)
                 .foregroundStyle(Theme.textSecondary)
+                .help("Cancel current operation")
+            }
         }
         .padding(.horizontal, Theme.Spacing.md)
-        .padding(.vertical, 6)
+        .padding(.vertical, 5)
         .background(Capsule().fill(Theme.accentSoft))
         .transition(.scale.combined(with: .opacity))
     }
@@ -197,6 +280,16 @@ struct ReviewWorkspaceView: View {
             } label: { Image(systemName: "magnifyingglass") }
                 .buttonStyle(ToolbarIconButtonStyle(active: model.isFindVisible))
                 .help("Find & replace (⌘F)")
+
+            Button {
+                model.denoiseDocument()
+            } label: {
+                menuChip("Denoise", systemImage: "wand.and.stars")
+            }
+            .buttonStyle(.plain)
+            .fixedSize()
+            .disabled(!model.canDenoiseDocument)
+            .help("Remove repeated headers, footers, and page numbers from OCR text")
 
             Menu {
                 Button("This Page") { model.recognizeCurrentPage() }
@@ -225,10 +318,12 @@ struct ReviewWorkspaceView: View {
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .fixedSize()
-            .disabled(model.pdfDocument == nil)
+            .disabled(model.pdfDocument == nil || model.isProcessing)
 
             Menu {
                 Button("Markdown (.md)") { model.exportMarkdown() }
+                Text(model.exportStatusLabel)
+                    .font(.caption)
                 Button("Word (.docx)") { model.exportDOCX() }
                     .disabled(model.document?.ocrPageCount == 0)
                 Button("Searchable PDF") { model.exportSearchablePDF() }
@@ -310,7 +405,66 @@ struct ReviewWorkspaceView: View {
                 ZoomControls(controller: model.pdfController)
                     .padding(Theme.Spacing.lg)
             }
+
+            if !model.currentPageHasOCR && !model.isProcessing {
+                unrecognizedPagePrompt
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                    .padding(Theme.Spacing.xl)
+                    .transition(.scale.combined(with: .opacity))
+            }
         }
+    }
+
+    private var unrecognizedPagePrompt: some View {
+        VStack(spacing: Theme.Spacing.md) {
+            Image(systemName: "text.viewfinder")
+                .font(.system(size: 28, weight: .medium))
+                .foregroundStyle(Theme.warning)
+            VStack(spacing: 4) {
+                Text(model.failedPageNumbers.contains(model.currentPageIndex + 1)
+                     ? "OCR failed on page \(model.currentPageIndex + 1)"
+                     : "Page \(model.currentPageIndex + 1) has not been OCR'd")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Theme.text)
+                Text(model.exportStatusLabel)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.textSecondary)
+                    .multilineTextAlignment(.center)
+            }
+            HStack(spacing: Theme.Spacing.sm) {
+                if model.failedPageNumbers.contains(model.currentPageIndex + 1) {
+                    Button {
+                        model.retryFailedPage(model.currentPageIndex + 1)
+                    } label: {
+                        Label("Retry Page", systemImage: "arrow.clockwise")
+                    }
+                    .buttonStyle(PrimaryButtonStyle())
+                } else {
+                    Button {
+                        model.recognizeCurrentPage()
+                    } label: {
+                        Label("Recognize Page", systemImage: "text.viewfinder")
+                    }
+                    .buttonStyle(PrimaryButtonStyle())
+                }
+
+                if model.remainingOCRPageCount > 1 {
+                    Button {
+                        model.recognizeAllPages()
+                    } label: {
+                        Label("Recognize All", systemImage: "doc.text.magnifyingglass")
+                    }
+                    .buttonStyle(SoftButtonStyle(tint: Theme.warning))
+                }
+            }
+        }
+        .padding(Theme.Spacing.xl)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: Theme.Radius.xl, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.Radius.xl, style: .continuous)
+                .strokeBorder(Theme.warning.opacity(0.35), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.35), radius: 18, y: 8)
     }
 }
 

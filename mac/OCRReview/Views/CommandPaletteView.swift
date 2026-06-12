@@ -192,6 +192,7 @@ struct CommandPaletteView: View {
             model.isFindVisible = true
             model.refreshFindResults()
         }
+        add("Denoise Repeated Headers/Footers", "wand.and.stars", group: "Edit", shortcut: "⌘⇧D", enabled: model.canDenoiseDocument) { model.denoiseDocument() }
 
         add("Next Issue", "arrow.down.circle", group: "Review", shortcut: "⌥↓", enabled: model.hasReviewIssues) { model.goToNextIssue() }
         add("Previous Issue", "arrow.up.circle", group: "Review", shortcut: "⌥↑", enabled: model.hasReviewIssues) { model.goToPreviousIssue() }

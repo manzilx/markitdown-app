@@ -2,14 +2,22 @@ import PDFKit
 import SwiftUI
 
 struct PageThumbnailStrip: View {
+    /// `.horizontal` is the classic bottom strip; `.vertical` is the Acrobat-style
+    /// left pages panel.
+    var axis: Axis = .horizontal
     let totalPages: Int
     @Binding var currentPageIndex: Int
     let document: PDFDocument?
     var ocrPageNumbers: Set<Int> = []
     var issuePageNumbers: Set<Int> = []
+    var failedPageNumbers: Set<Int> = []
     var onMovePage: ((Int, Int) -> Void)?
     var onRotatePage: ((Int, Bool) -> Void)?
     var onDeletePage: ((Int) -> Void)?
+
+    private var thumbSize: CGSize {
+        axis == .horizontal ? CGSize(width: 62, height: 80) : CGSize(width: 92, height: 119)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -19,23 +27,18 @@ struct PageThumbnailStrip: View {
                     .font(.system(size: 10.5, weight: .bold).monospacedDigit())
                     .foregroundStyle(Theme.dim)
                 Spacer()
-                Text("Drag to reorder · right-click for tools")
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(Theme.dim)
+                if axis == .horizontal {
+                    Text("Drag to reorder · right-click for tools")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(Theme.dim)
+                }
             }
             .padding(.horizontal, Theme.Spacing.lg)
             .padding(.top, Theme.Spacing.sm)
 
             ScrollViewReader { proxy in
-                ScrollView(.horizontal, showsIndicators: false) {
-                    LazyHStack(spacing: Theme.Spacing.md) {
-                        ForEach(0..<totalPages, id: \.self) { index in
-                            thumbnailButton(for: index)
-                                .id(index)
-                        }
-                    }
-                    .padding(.horizontal, Theme.Spacing.lg)
-                    .padding(.vertical, Theme.Spacing.md)
+                ScrollView(axis == .horizontal ? .horizontal : .vertical, showsIndicators: false) {
+                    layoutStack
                 }
                 .onChange(of: currentPageIndex) { _, newIndex in
                     withAnimation(Theme.Motion.snappy) {
@@ -51,6 +54,30 @@ struct PageThumbnailStrip: View {
     }
 
     @ViewBuilder
+    private var layoutStack: some View {
+        if axis == .horizontal {
+            LazyHStack(spacing: Theme.Spacing.md) {
+                ForEach(0..<totalPages, id: \.self) { index in
+                    thumbnailButton(for: index)
+                        .id(index)
+                }
+            }
+            .padding(.horizontal, Theme.Spacing.lg)
+            .padding(.vertical, Theme.Spacing.md)
+        } else {
+            LazyVStack(spacing: Theme.Spacing.md) {
+                ForEach(0..<totalPages, id: \.self) { index in
+                    thumbnailButton(for: index)
+                        .id(index)
+                }
+            }
+            .padding(.horizontal, Theme.Spacing.md)
+            .padding(.vertical, Theme.Spacing.md)
+            .frame(maxWidth: .infinity)
+        }
+    }
+
+    @ViewBuilder
     private func thumbnailButton(for index: Int) -> some View {
         let isCurrent = index == currentPageIndex
         Button {
@@ -59,7 +86,7 @@ struct PageThumbnailStrip: View {
             VStack(spacing: 6) {
                 ZStack(alignment: .topTrailing) {
                     thumbnail(for: index)
-                        .frame(width: 62, height: 80)
+                        .frame(width: thumbSize.width, height: thumbSize.height)
                         .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
                         .overlay(
                             RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous)
@@ -97,7 +124,12 @@ struct PageThumbnailStrip: View {
     @ViewBuilder
     private func statusDot(for index: Int) -> some View {
         let pageNumber = index + 1
-        if ocrPageNumbers.contains(pageNumber) {
+        if failedPageNumbers.contains(pageNumber) {
+            Image(systemName: "exclamationmark.circle.fill")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(Theme.danger)
+                .background(Circle().fill(Theme.surface).frame(width: 9, height: 9))
+        } else if ocrPageNumbers.contains(pageNumber) {
             Circle()
                 .fill(issuePageNumbers.contains(pageNumber) ? Theme.warning : Theme.success)
                 .frame(width: 7, height: 7)

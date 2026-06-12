@@ -31,16 +31,17 @@ struct WelcomeView: View {
     private var backdrop: some View {
         ZStack {
             Theme.canvasGradient.ignoresSafeArea()
-            Circle()
-                .fill(Theme.accent.opacity(0.22))
-                .frame(width: 460, height: 460)
-                .blur(radius: 140)
-                .offset(x: -120, y: -260)
-            Circle()
-                .fill(Color(red: 0.36, green: 0.74, blue: 0.92).opacity(0.16))
-                .frame(width: 420, height: 420)
-                .blur(radius: 150)
-                .offset(x: 180, y: -160)
+            LinearGradient(
+                colors: [
+                    Theme.accent.opacity(0.18),
+                    Color.clear,
+                    Theme.info.opacity(0.10),
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .blendMode(.screen)
+            .ignoresSafeArea()
         }
         .allowsHitTesting(false)
     }
@@ -106,7 +107,7 @@ struct WelcomeView: View {
             if model.isProcessing {
                 HStack(spacing: Theme.Spacing.sm) {
                     ProgressView().controlSize(.small)
-                    Text("Running Apple Vision OCR…")
+                    Text(model.processingMessage.isEmpty ? "Working…" : model.processingMessage)
                         .font(.system(size: 12))
                         .foregroundStyle(Theme.textSecondary)
                 }
@@ -251,6 +252,7 @@ private struct RecentDocumentCard: View {
 struct ContentView: View {
     @ObservedObject var model: DocumentViewModel
     @ObservedObject var jobStore: JobStore
+    @ObservedObject var sidecarManager: SidecarProcessManager
     @State private var isDropTargeted = false
 
     var body: some View {
@@ -286,14 +288,56 @@ struct ContentView: View {
         .onDrop(of: [.fileURL], isTargeted: $isDropTargeted.animation(Theme.Motion.snappy)) { providers in
             handleDrop(providers)
         }
-        .alert("Something went wrong", isPresented: Binding(
-            get: { model.errorMessage != nil },
-            set: { if !$0 { model.errorMessage = nil } }
-        )) {
-            Button("OK") { model.errorMessage = nil }
-        } message: {
-            Text(model.errorMessage ?? "")
+        .overlay(alignment: .top) {
+            VStack(spacing: Theme.Spacing.sm) {
+                if let appError = model.appError {
+                    NoticeBanner(
+                        title: appError.title,
+                        message: appError.displayMessage,
+                        tone: .error,
+                        onDismiss: { model.clearError() }
+                    )
+                } else if let message = model.errorMessage {
+                    let isDenoiseSuccess = message.hasPrefix("Denoise removed") && model.canUndoDenoise
+                    NoticeBanner(
+                        title: isDenoiseSuccess ? "Denoise applied" : "Needs attention",
+                        message: message,
+                        tone: message.hasPrefix("OCR completed for") || message.hasPrefix("OCR cancelled") || message.hasPrefix("Denoise") ? .warning : .error,
+                        actionTitle: isDenoiseSuccess ? "Undo" : nil,
+                        onAction: isDenoiseSuccess ? { model.undoDenoise() } : nil,
+                        onDismiss: { model.clearError() }
+                    )
+                } else if let error = jobStore.lastError {
+                    NoticeBanner(
+                        title: error.title,
+                        message: error.displayMessage,
+                        tone: error.title.hasPrefix("Recovered") ? .info : .error,
+                        onDismiss: { jobStore.clearLastError() }
+                    )
+                } else if let error = sidecarManager.lastError {
+                    NoticeBanner(
+                        title: error.title,
+                        message: error.displayMessage,
+                        tone: .warning,
+                        actionTitle: "Retry",
+                        onAction: {
+                            Task {
+                                await sidecarManager.restart()
+                            }
+                        },
+                        onDismiss: { sidecarManager.clearLastError() }
+                    )
+                }
+            }
+            .frame(maxWidth: 680)
+            .padding(.top, Theme.Spacing.lg)
+            .padding(.horizontal, Theme.Spacing.lg)
+            .transition(.move(edge: .top).combined(with: .opacity))
+            .zIndex(20)
         }
+        .animation(Theme.Motion.snappy, value: model.errorMessage)
+        .animation(Theme.Motion.snappy, value: jobStore.lastError)
+        .animation(Theme.Motion.snappy, value: sidecarManager.lastError)
     }
 
     private func handleDrop(_ providers: [NSItemProvider]) -> Bool {

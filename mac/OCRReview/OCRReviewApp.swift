@@ -9,10 +9,12 @@ struct OCRReviewApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView(model: model, jobStore: jobStore)
+            ContentView(model: model, jobStore: jobStore, sidecarManager: sidecarManager)
                 .frame(minWidth: 960, minHeight: 640)
                 .preferredColorScheme(.dark)
                 .task {
+                    // Don't spawn the sidecar while running unit tests.
+                    guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return }
                     await sidecarManager.ensureRunning()
                 }
         }
@@ -35,6 +37,14 @@ struct OCRReviewApp: App {
                     model.recognizeAllPages()
                 }
                 .disabled(model.loadedSource == nil)
+
+                Button("Cancel Current Operation") {
+                    model.cancelCurrentOperation()
+                }
+                .keyboardShortcut(".", modifiers: .command)
+                .disabled(!model.isProcessing)
+
+                Divider()
 
                 Button("Export Markdown…") {
                     model.exportMarkdown()
@@ -92,6 +102,11 @@ struct OCRReviewApp: App {
                 }
                 .keyboardShortcut("h", modifiers: [.command, .option])
                 .disabled(model.document == nil)
+                Button("Denoise Repeated Headers/Footers…") {
+                    model.denoiseDocument()
+                }
+                .keyboardShortcut("d", modifiers: [.command, .shift])
+                .disabled(!model.canDenoiseDocument)
                 Divider()
                 Button(model.isSelectedRegionRedacted ? "Un-redact Region" : "Redact Region") {
                     model.toggleRedactionForSelection()
@@ -149,6 +164,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         MainActor.assumeIsolated {
             JobStore.shared.flushSynchronously()
+            // Kill the spawned Python sidecar — otherwise it outlives the app,
+            // holding port 8001 and serving stale code forever.
+            SidecarProcessManager.shared.stop()
         }
     }
 }
@@ -161,6 +179,11 @@ struct SettingsView: View {
 
     @State private var sidecarHealthy = false
     @State private var sidecarEngines: [EngineSidecarClient.SidecarEngineInfo] = []
+    @State private var projectRootRestart: Task<Void, Never>?
+
+    private var sidecarOCREngines: [EngineSidecarClient.SidecarEngineInfo] {
+        sidecarEngines.filter(\.supportsPageOCR)
+    }
 
     var body: some View {
         Form {
@@ -218,7 +241,7 @@ struct SettingsView: View {
             Section("OCR engine") {
                 Picker("Engine", selection: $selectedEngine) {
                     Text("Apple Vision (on-device)").tag("vision")
-                    ForEach(sidecarEngines) { engine in
+                    ForEach(sidecarOCREngines) { engine in
                         Text(enginePickerLabel(engine)).tag(engine.id)
                             .disabled(!engine.available)
                     }
@@ -242,7 +265,17 @@ struct SettingsView: View {
         .frame(width: 480, height: 420)
         .task { await refreshSidecarStatus() }
         .onChange(of: sidecarURL) { _, _ in Task { await refreshSidecarStatus() } }
-        .onChange(of: projectRoot) { _, _ in Task { await sidecarManager.restart(); await refreshSidecarStatus() } }
+        .onChange(of: projectRoot) { _, _ in
+            // Debounce: this fires per keystroke, and each restart is a kill + spawn +
+            // health poll. Only restart once typing pauses.
+            projectRootRestart?.cancel()
+            projectRootRestart = Task {
+                try? await Task.sleep(for: .seconds(1))
+                guard !Task.isCancelled else { return }
+                await sidecarManager.restart()
+                await refreshSidecarStatus()
+            }
+        }
     }
 
     private var engineDescription: String {
@@ -252,11 +285,11 @@ struct SettingsView: View {
         case "azure_doc_intel":
             return "Azure Document Intelligence for hard scans, tables, and forms. Requires MARKITDOWN_DOCINTEL_* in .env."
         case "pymupdf4llm":
-            return "Fast PDF conversion via PyMuPDF4LLM. Good for text-heavy PDFs."
+            return "PyMuPDF4LLM is a document converter, not a page-image OCR engine. Use it from the web converter, not OCR review."
         case "ocr_plugin":
             return "LLM vision OCR for embedded images. Requires MARKITDOWN_LLM_* in .env."
         case "builtin":
-            return "MarkItDown built-in converters (pdfplumber, office parsers)."
+            return "Built-in MarkItDown is a document converter, not a page-image OCR engine. Use Apple Vision for local OCR."
         default:
             return "Selected engine runs through the Python sidecar per page."
         }
@@ -278,7 +311,7 @@ struct SettingsView: View {
             do {
                 sidecarEngines = try await EngineSidecarClient.fetchEngines()
                 if selectedEngine != "vision",
-                   !sidecarEngines.contains(where: { $0.id == selectedEngine && $0.available })
+                   !sidecarEngines.contains(where: { $0.id == selectedEngine && $0.available && $0.supportsPageOCR })
                 {
                     selectedEngine = "vision"
                 }

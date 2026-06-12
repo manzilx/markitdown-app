@@ -35,6 +35,10 @@ enum SidecarOCRService {
     }
 
     private static func convert(data: Data, filename: String, engine: String) async throws -> String {
+        guard OCRSettings.supportsSidecarPageOCR(engine) else {
+            throw SidecarError.serverError("\(OCRSettings.engineLabel(for: engine)) cannot OCR rendered page images. Choose Apple Vision, Azure Document Intelligence, or LLM OCR in Settings.")
+        }
+
         guard let endpoint = URL(string: "\(SidecarConfig.baseURL)/v1/convert") else {
             throw SidecarError.invalidResponse
         }
