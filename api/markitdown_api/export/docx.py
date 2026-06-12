@@ -246,30 +246,59 @@ def _group_rows(lines: list[_Line]) -> list[_Row]:
     return rows
 
 
+def _edges_align(a: _Line, b: _Line) -> bool:
+    """Same column if LEFT edges align (text columns) or RIGHT edges align
+    (numeric columns in invoices/financials are right-aligned — their left
+    edges scatter with the number width)."""
+    return (
+        abs(a.left - b.left) <= _COLUMN_TOLERANCE
+        or abs(a.right - b.right) <= _COLUMN_TOLERANCE
+    )
+
+
 def _columns_align(a: _Row, b: _Row) -> bool:
     """Do two multi-cell rows share a column structure?"""
-    a_lefts = [c.left for c in a.cells]
-    b_lefts = [c.left for c in b.cells]
-    smaller, larger = (a_lefts, b_lefts) if len(a_lefts) <= len(b_lefts) else (b_lefts, a_lefts)
+    smaller, larger = (a.cells, b.cells) if len(a.cells) <= len(b.cells) else (b.cells, a.cells)
     matched = sum(
-        1 for left in smaller
-        if any(abs(left - other) <= _COLUMN_TOLERANCE for other in larger)
+        1 for cell in smaller
+        if any(_edges_align(cell, other) for other in larger)
     )
     return matched >= max(2, len(smaller) - 1)
 
 
+def _is_continuation(row: _Row, run: list[_Row]) -> bool:
+    """A wrapped cell: a single line directly below the previous row, sitting at a
+    non-first column anchor — the rest of a value that didn't fit on one line."""
+    if len(row.cells) != 1:
+        return False
+    cell = row.cells[0]
+    anchors = _column_anchors(run)
+    col = _nearest_anchor(anchors, cell.left)
+    if col == 0 or abs(anchors[col] - cell.left) > _COLUMN_TOLERANCE:
+        return False
+    gap = row.top - run[-1].bottom
+    return gap <= max(run[-1].height, 0.012) * 1.2
+
+
 def _segment_rows(rows: list[_Row]) -> list[tuple[str, list[_Row]]]:
-    """Split rows into ('table', …) runs (≥2 aligned multi-cell rows) and ('text', …)."""
+    """Split rows into ('table', …) runs (≥2 aligned multi-cell rows, plus any
+    wrapped-cell continuation lines) and ('text', …)."""
     segments: list[tuple[str, list[_Row]]] = []
     i = 0
     while i < len(rows):
         if rows[i].is_multi_cell:
             run = [rows[i]]
             j = i + 1
-            while j < len(rows) and rows[j].is_multi_cell and _columns_align(run[-1], rows[j]):
-                run.append(rows[j])
+            while j < len(rows):
+                last_real = next(r for r in reversed(run) if r.is_multi_cell)
+                if rows[j].is_multi_cell and _columns_align(last_real, rows[j]):
+                    run.append(rows[j])
+                elif _is_continuation(rows[j], run):
+                    run.append(rows[j])
+                else:
+                    break
                 j += 1
-            if len(run) >= 2:
+            if sum(1 for r in run if r.is_multi_cell) >= 2:
                 segments.append(("table", run))
                 i = j
                 continue
@@ -303,30 +332,57 @@ def _body_point_size(lines: list[_Line]) -> float:
 
 
 def _emit_table(doc: Document, rows: list[_Row]) -> None:
-    """Emit aligned multi-cell rows as a borderless Word table with geometric widths."""
-    anchors = _column_anchors(rows)
+    """Emit aligned multi-cell rows as a borderless Word table with geometric widths.
+
+    When every real row has the same cell count, columns are POSITIONAL (cell i →
+    column i): this places right-aligned numeric columns correctly even though
+    their left edges scatter. Mixed cell counts fall back to left-edge anchors.
+    Single-cell continuation rows (wrapped values) merge into the previous row.
+    """
+    real_rows = [r for r in rows if r.is_multi_cell]
+    uniform = len({len(r.cells) for r in real_rows}) == 1
+    anchors = (
+        [min(r.cells[i].left for r in real_rows) for i in range(len(real_rows[0].cells))]
+        if uniform
+        else _column_anchors(real_rows)
+    )
+    ncols = len(anchors)
+
+    # Build the grid first: each entry is one table row, col -> wrapped lines.
+    grid: list[dict[int, list[_Line]]] = []
+    for row in rows:
+        if grid and not row.is_multi_cell:
+            line = row.cells[0]
+            col = _nearest_anchor(anchors, line.left)
+            grid[-1].setdefault(col, []).append(line)
+            continue
+        entry: dict[int, list[_Line]] = {}
+        if uniform and row.is_multi_cell:
+            for i, cell_line in enumerate(row.cells):
+                entry.setdefault(min(i, ncols - 1), []).append(cell_line)
+        else:
+            for cell_line in row.cells:
+                entry.setdefault(_nearest_anchor(anchors, cell_line.left), []).append(cell_line)
+        grid.append(entry)
+
     right_edge = max(c.right for row in rows for c in row.cells)
-
-    table = doc.add_table(rows=len(rows), cols=len(anchors))
-    table.autofit = False
-
-    # Column widths from the anchor positions (last column runs to the right edge).
     boundaries = anchors + [right_edge]
     widths = [
         Inches(max((boundaries[i + 1] - boundaries[i]) * _PAGE_WIDTH_IN, 0.4))
-        for i in range(len(anchors))
+        for i in range(ncols)
     ]
 
-    for r, row in enumerate(rows):
-        for cell_line in row.cells:
-            col = _nearest_anchor(anchors, cell_line.left)
+    table = doc.add_table(rows=len(grid), cols=ncols)
+    table.autofit = False
+
+    for r, entry in enumerate(grid):
+        for col, cell_lines in entry.items():
             cell = table.cell(r, col)
-            paragraph = cell.paragraphs[0]
-            if paragraph.text:
-                paragraph = cell.add_paragraph()
-            run = paragraph.add_run(cell_line.text)
-            run.font.size = Pt(cell_line.font_pt)
-            paragraph.paragraph_format.space_after = Pt(2)
+            for k, line in enumerate(cell_lines):
+                paragraph = cell.paragraphs[0] if k == 0 else cell.add_paragraph()
+                run = paragraph.add_run(line.text)
+                run.font.size = Pt(line.font_pt)
+                paragraph.paragraph_format.space_after = Pt(2)
         for c, width in enumerate(widths):
             table.cell(r, c).width = width
 
