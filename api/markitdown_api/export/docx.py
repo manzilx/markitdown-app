@@ -3,10 +3,13 @@
 Two modes per page:
 
 - **Layout mode** (page has block geometry): reconstruct the original document's
-  look from the OCR bounding boxes — font sizes derived from line heights,
-  oversized lines bolded as headings, centered/right alignment detected from
-  block positions, paragraphs grouped by vertical gaps, indents preserved, and a
-  page break between pages. No artificial "Page N" headings.
+  look from the OCR bounding boxes — side-by-side lines become real Word tables
+  (columns clustered across consecutive rows, widths from geometry), font sizes
+  are quantized into document-wide classes derived from line heights, oversized
+  lines are bolded as headings, centered/right alignment is detected from block
+  positions, paragraphs are grouped by vertical gaps, indents and margins are
+  preserved, and pages are separated by real page breaks. No artificial "Page N"
+  headings.
 - **Plain mode** (no usable geometry, or the user edited the page's text as a
   whole so the blocks no longer describe it): the legacy line-per-paragraph dump
   with the document title and per-page headings.
@@ -16,7 +19,7 @@ from __future__ import annotations
 
 import io
 import statistics
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from docx import Document
@@ -35,6 +38,11 @@ _PAGE_HEIGHT_PT = 792.0
 _PAGE_WIDTH_IN = 8.5
 # Empirical: a text line's bbox (ascender to descender) is ~1.2x the font size.
 _FONT_FACTOR = 0.85
+# Two cells on the same visual row must be separated by at least this much
+# horizontally to count as table columns (filters touching/overlapping boxes).
+_MIN_CELL_GAP = 0.02
+# Left edges within this distance are treated as the same column.
+_COLUMN_TOLERANCE = 0.06
 
 
 @dataclass
@@ -44,6 +52,11 @@ class _Line:
     right: float
     top: float     # normalized, from page TOP (flipped from Vision's bottom-left)
     height: float
+    font_pt: float = 11.0  # assigned from document-wide size classes
+
+    @property
+    def bottom(self) -> float:
+        return self.top + self.height
 
     @property
     def center(self) -> float:
@@ -52,6 +65,27 @@ class _Line:
     @property
     def width(self) -> float:
         return self.right - self.left
+
+
+@dataclass
+class _Row:
+    """Lines that sit side-by-side on the same visual row, left to right."""
+    cells: list[_Line] = field(default_factory=list)
+    top: float = 0.0
+    bottom: float = 0.0
+
+    @property
+    def height(self) -> float:
+        return self.bottom - self.top
+
+    @property
+    def is_multi_cell(self) -> bool:
+        if len(self.cells) < 2:
+            return False
+        return all(
+            b.left - a.right >= _MIN_CELL_GAP
+            for a, b in zip(self.cells, self.cells[1:])
+        )
 
 
 def build_docx(pages: list[dict[str, Any]], title: str = "OCR Export") -> bytes:
@@ -70,8 +104,11 @@ def build_docx(pages: list[dict[str, Any]], title: str = "OCR Export") -> bytes:
     if not any(page_lines):
         return _build_plain(pages_by_number, title)
 
+    all_lines = [line for lines in page_lines if lines for line in lines]
+    _assign_size_classes(all_lines)
+
     doc = Document()
-    _fit_margins(doc, [line for lines in page_lines if lines for line in lines])
+    _fit_margins(doc, all_lines)
 
     first_content = True
     for page_data, lines in zip(pages_by_number, page_lines):
@@ -113,6 +150,8 @@ def _build_plain(pages_by_number: list[dict[str, Any]], title: str) -> bytes:
     return out.getvalue()
 
 
+# ---------------------------------------------------------------- geometry
+
 def _layout_lines(page_data: dict[str, Any]) -> list[_Line]:
     """Geometry lines in reading order, or [] when layout mode can't be trusted."""
     blocks = page_data.get("blocks") or []
@@ -142,12 +181,219 @@ def _layout_lines(page_data: dict[str, Any]) -> list[_Line]:
     # plain mode unless the block text still matches the display text line-for-line.
     edited = page_data.get("edited_text")
     if edited:
-        block_lines = [l.text for l in lines]
-        edited_lines = [s.strip() for s in str(edited).splitlines() if s.strip()]
+        block_lines = sorted(l.text for l in lines)
+        edited_lines = sorted(s.strip() for s in str(edited).splitlines() if s.strip())
         if block_lines != edited_lines:
             return []
 
     return lines
+
+
+def _assign_size_classes(lines: list[_Line]) -> None:
+    """Quantize line heights into document-wide font sizes.
+
+    Raw OCR heights jitter line to line (10.4pt, 11.1pt, 10.8pt…), which exported
+    as visibly inconsistent body text. Cluster heights within 18% and give every
+    member of a cluster the same point size.
+    """
+    if not lines:
+        return
+    heights = sorted(l.height for l in lines)
+    clusters: list[list[float]] = [[heights[0]]]
+    for h in heights[1:]:
+        if h <= clusters[-1][0] * 1.18:
+            clusters[-1].append(h)
+        else:
+            clusters.append([h])
+
+    bounds_and_pt = []
+    for cluster in clusters:
+        median_h = statistics.median(cluster)
+        pt = min(max(median_h * _PAGE_HEIGHT_PT * _FONT_FACTOR, 6.0), 72.0)
+        bounds_and_pt.append((cluster[0], cluster[-1], round(pt * 2) / 2))
+
+    for line in lines:
+        for low, high, pt in bounds_and_pt:
+            if low <= line.height <= high:
+                line.font_pt = pt
+                break
+        else:
+            line.font_pt = round(
+                min(max(line.height * _PAGE_HEIGHT_PT * _FONT_FACTOR, 6.0), 72.0) * 2
+            ) / 2
+
+
+def _group_rows(lines: list[_Line]) -> list[_Row]:
+    """Group reading-order lines into visual rows by vertical overlap."""
+    rows: list[_Row] = []
+    for line in lines:
+        if rows:
+            row = rows[-1]
+            overlap = min(row.bottom, line.bottom) - max(row.top, line.top)
+            if overlap >= 0.5 * min(row.height, line.height):
+                row.cells.append(line)
+                row.top = min(row.top, line.top)
+                row.bottom = max(row.bottom, line.bottom)
+                continue
+        rows.append(_Row(cells=[line], top=line.top, bottom=line.bottom))
+
+    for row in rows:
+        row.cells.sort(key=lambda l: l.left)
+    return rows
+
+
+def _columns_align(a: _Row, b: _Row) -> bool:
+    """Do two multi-cell rows share a column structure?"""
+    a_lefts = [c.left for c in a.cells]
+    b_lefts = [c.left for c in b.cells]
+    smaller, larger = (a_lefts, b_lefts) if len(a_lefts) <= len(b_lefts) else (b_lefts, a_lefts)
+    matched = sum(
+        1 for left in smaller
+        if any(abs(left - other) <= _COLUMN_TOLERANCE for other in larger)
+    )
+    return matched >= max(2, len(smaller) - 1)
+
+
+def _segment_rows(rows: list[_Row]) -> list[tuple[str, list[_Row]]]:
+    """Split rows into ('table', …) runs (≥2 aligned multi-cell rows) and ('text', …)."""
+    segments: list[tuple[str, list[_Row]]] = []
+    i = 0
+    while i < len(rows):
+        if rows[i].is_multi_cell:
+            run = [rows[i]]
+            j = i + 1
+            while j < len(rows) and rows[j].is_multi_cell and _columns_align(run[-1], rows[j]):
+                run.append(rows[j])
+                j += 1
+            if len(run) >= 2:
+                segments.append(("table", run))
+                i = j
+                continue
+        if segments and segments[-1][0] == "text":
+            segments[-1][1].append(rows[i])
+        else:
+            segments.append(("text", [rows[i]]))
+        i += 1
+    return segments
+
+
+# ---------------------------------------------------------------- rendering
+
+def _render_layout_page(doc: Document, lines: list[_Line]) -> None:
+    body_pt = _body_point_size(lines)
+    column_width = max((l.width for l in lines), default=0.0)
+    page_left = min(l.left for l in lines)
+
+    rows = _group_rows(lines)
+    for kind, seg_rows in _segment_rows(rows):
+        if kind == "table":
+            _emit_table(doc, seg_rows)
+        else:
+            seg_lines = [cell for row in seg_rows for cell in row.cells]
+            _emit_paragraphs(doc, seg_lines, body_pt, column_width, page_left)
+
+
+def _body_point_size(lines: list[_Line]) -> float:
+    sizes = [l.font_pt for l in lines]
+    return max(set(sizes), key=sizes.count)
+
+
+def _emit_table(doc: Document, rows: list[_Row]) -> None:
+    """Emit aligned multi-cell rows as a borderless Word table with geometric widths."""
+    anchors = _column_anchors(rows)
+    right_edge = max(c.right for row in rows for c in row.cells)
+
+    table = doc.add_table(rows=len(rows), cols=len(anchors))
+    table.autofit = False
+
+    # Column widths from the anchor positions (last column runs to the right edge).
+    boundaries = anchors + [right_edge]
+    widths = [
+        Inches(max((boundaries[i + 1] - boundaries[i]) * _PAGE_WIDTH_IN, 0.4))
+        for i in range(len(anchors))
+    ]
+
+    for r, row in enumerate(rows):
+        for cell_line in row.cells:
+            col = _nearest_anchor(anchors, cell_line.left)
+            cell = table.cell(r, col)
+            paragraph = cell.paragraphs[0]
+            if paragraph.text:
+                paragraph = cell.add_paragraph()
+            run = paragraph.add_run(cell_line.text)
+            run.font.size = Pt(cell_line.font_pt)
+            paragraph.paragraph_format.space_after = Pt(2)
+        for c, width in enumerate(widths):
+            table.cell(r, c).width = width
+
+    # Breathing room after the table.
+    doc.add_paragraph().paragraph_format.space_after = Pt(4)
+
+
+def _column_anchors(rows: list[_Row]) -> list[float]:
+    lefts = sorted(c.left for row in rows for c in row.cells)
+    anchors: list[float] = [lefts[0]]
+    for left in lefts[1:]:
+        if left - anchors[-1] > _COLUMN_TOLERANCE:
+            anchors.append(left)
+    return anchors
+
+
+def _nearest_anchor(anchors: list[float], left: float) -> int:
+    return min(range(len(anchors)), key=lambda i: abs(anchors[i] - left))
+
+
+def _emit_paragraphs(
+    doc: Document,
+    lines: list[_Line],
+    body_pt: float,
+    column_width: float,
+    page_left: float,
+) -> None:
+    if not lines:
+        return
+    for para_lines, gap_after in _group_paragraphs(lines, column_width):
+        sizes = [l.font_pt for l in para_lines]
+        font_pt = max(set(sizes), key=sizes.count)
+        is_heading = font_pt >= body_pt * 1.25 and len(para_lines) <= 3
+
+        paragraph = doc.add_paragraph()
+        paragraph.alignment = _alignment(para_lines)
+
+        if paragraph.alignment == WD_ALIGN_PARAGRAPH.LEFT:
+            indent = (min(l.left for l in para_lines) - page_left) * _PAGE_WIDTH_IN
+            if indent > 0.08:
+                paragraph.paragraph_format.left_indent = Inches(min(indent, 3.0))
+
+        run = paragraph.add_run(" ".join(l.text for l in para_lines))
+        run.font.size = Pt(font_pt)
+        if is_heading:
+            run.font.bold = True
+
+        paragraph.paragraph_format.space_after = Pt(14 if gap_after else 6)
+
+
+def _group_paragraphs(
+    lines: list[_Line], column_width: float
+) -> list[tuple[list[_Line], bool]]:
+    """Group reading-order lines into paragraphs; flag big gaps for extra spacing."""
+    body_height = statistics.median(l.height for l in lines)
+    groups: list[tuple[list[_Line], bool]] = []
+    current: list[_Line] = [lines[0]]
+
+    for prev, cur in zip(lines, lines[1:]):
+        gap = cur.top - prev.top
+        size_change = cur.font_pt != prev.font_pt
+        short_prev = column_width > 0 and prev.width < column_width * 0.55
+        align_change = _line_alignment(cur) != _line_alignment(prev)
+
+        if gap > body_height * 1.7 or size_change or short_prev or align_change:
+            groups.append((current, gap > body_height * 2.6))
+            current = [cur]
+        else:
+            current.append(cur)
+    groups.append((current, False))
+    return groups
 
 
 def _fit_margins(doc: Document, lines: list[_Line]) -> None:
@@ -162,55 +408,6 @@ def _fit_margins(doc: Document, lines: list[_Line]) -> None:
     section = doc.sections[0]
     section.left_margin = Inches(min(max(left * _PAGE_WIDTH_IN, 0.4), 1.25))
     section.right_margin = Inches(min(max((1.0 - right) * _PAGE_WIDTH_IN, 0.4), 1.25))
-
-
-def _render_layout_page(doc: Document, lines: list[_Line]) -> None:
-    body_height = statistics.median(l.height for l in lines)
-    column_width = max((l.width for l in lines), default=0.0)
-    page_left = min(l.left for l in lines)
-
-    paragraphs = _group_paragraphs(lines, body_height, column_width)
-    for para_lines, gap_after in paragraphs:
-        size = statistics.median(l.height for l in para_lines)
-        font_pt = min(max(size * _PAGE_HEIGHT_PT * _FONT_FACTOR, 6.0), 72.0)
-        is_heading = size >= body_height * 1.25 and len(para_lines) <= 3
-
-        paragraph = doc.add_paragraph()
-        paragraph.alignment = _alignment(para_lines)
-
-        if paragraph.alignment == WD_ALIGN_PARAGRAPH.LEFT:
-            indent = (min(l.left for l in para_lines) - page_left) * _PAGE_WIDTH_IN
-            if indent > 0.08:
-                paragraph.paragraph_format.left_indent = Inches(min(indent, 3.0))
-
-        run = paragraph.add_run(" ".join(l.text for l in para_lines))
-        run.font.size = Pt(round(font_pt * 2) / 2)
-        if is_heading:
-            run.font.bold = True
-
-        paragraph.paragraph_format.space_after = Pt(14 if gap_after else 6)
-
-
-def _group_paragraphs(
-    lines: list[_Line], body_height: float, column_width: float
-) -> list[tuple[list[_Line], bool]]:
-    """Group reading-order lines into paragraphs; flag big gaps for extra spacing."""
-    groups: list[tuple[list[_Line], bool]] = []
-    current: list[_Line] = [lines[0]]
-
-    for prev, cur in zip(lines, lines[1:]):
-        gap = cur.top - prev.top
-        size_change = abs(cur.height - prev.height) > body_height * 0.25
-        short_prev = column_width > 0 and prev.width < column_width * 0.55
-        align_change = _line_alignment(cur) != _line_alignment(prev)
-
-        if gap > body_height * 1.7 or size_change or short_prev or align_change:
-            groups.append((current, gap > body_height * 2.6))
-            current = [cur]
-        else:
-            current.append(cur)
-    groups.append((current, False))
-    return groups
 
 
 def _line_alignment(line: _Line) -> int:

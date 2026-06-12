@@ -134,3 +134,67 @@ def test_layout_mode_skips_redacted_blocks():
     out = build_docx([page])
     doc = Document(io.BytesIO(out))
     assert all("SECRET" not in p.text for p in doc.paragraphs)
+
+
+# ---- Table reconstruction ----
+
+def _table_page():
+    """A registry-style page: heading, then 3 label/value rows, then a footer line."""
+    rows = []
+    labels = [("Company", "ACME Corp"), ("Capital", "81 941 145,00 Euros"), ("Registered", "16/05/1997")]
+    y = 0.80
+    for label, value in labels:
+        rows.append(_block(label, 0.08, y, 0.18, 0.014))
+        rows.append(_block(value, 0.40, y, 0.35, 0.014))
+        y -= 0.025
+    return {
+        "page_number": 1,
+        "ocr_text": "REGISTRY EXTRACT\n" + "\n".join(f"{l}\n{v}" for l, v in labels) + "\nEnd of extract",
+        "blocks": [
+            _block("REGISTRY EXTRACT", 0.30, 0.90, 0.40, 0.028),
+            *rows,
+            _block("End of extract", 0.08, 0.60, 0.30, 0.014),
+        ],
+    }
+
+
+def test_side_by_side_rows_become_a_real_table():
+    out = build_docx([_table_page()])
+    doc = Document(io.BytesIO(out))
+
+    assert len(doc.tables) == 1
+    table = doc.tables[0]
+    assert len(table.rows) == 3
+    assert len(table.columns) == 2
+    assert "Company" in table.cell(0, 0).text
+    assert "ACME Corp" in table.cell(0, 1).text
+    assert "Registered" in table.cell(2, 0).text
+    assert "16/05/1997" in table.cell(2, 1).text
+
+    # Heading and footer stay as normal paragraphs outside the table.
+    para_text = "\n".join(p.text for p in doc.paragraphs)
+    assert "REGISTRY EXTRACT" in para_text
+    assert "End of extract" in para_text
+
+
+def test_plain_paragraph_pages_produce_no_tables():
+    out = build_docx([_layout_page()])
+    doc = Document(io.BytesIO(out))
+    assert len(doc.tables) == 0
+
+
+def test_body_font_sizes_are_quantized_to_one_class():
+    # Slightly jittery line heights (±8%) must export at ONE consistent size.
+    page = {
+        "page_number": 1,
+        "ocr_text": "a\nb\nc",
+        "blocks": [
+            _block("Line with height jitter one", 0.10, 0.80, 0.7, 0.0140),
+            _block("Line with height jitter two", 0.10, 0.75, 0.7, 0.0150),
+            _block("Line with height jitter three", 0.10, 0.70, 0.7, 0.0146),
+        ],
+    }
+    out = build_docx([page])
+    doc = Document(io.BytesIO(out))
+    sizes = {r.font.size for p in doc.paragraphs for r in p.runs if r.font.size}
+    assert len(sizes) == 1
