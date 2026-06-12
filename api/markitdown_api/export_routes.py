@@ -3,23 +3,50 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
 
 from markitdown_api.export.docx import DOCXExportError, build_docx
+from markitdown_api.export.payload import (
+    MAX_EXPORT_JSON_BYTES,
+    ExportPayloadError,
+    normalize_export_pages,
+)
 from markitdown_api.export.searchable_pdf import (
     SearchablePDFError,
     build_searchable_pdf,
     build_searchable_pdf_from_image,
 )
+from markitdown_api.http_utils import (
+    UploadTooLargeError,
+    attachment_headers,
+    read_upload_limited,
+)
 
 router = APIRouter(prefix="/v1/export", tags=["export"])
+logger = logging.getLogger(__name__)
 
 MAX_EXPORT_BYTES = 100 * 1024 * 1024
 
 _IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".heic"}
+
+
+def _parse_pages_json(pages_json: str) -> list[dict]:
+    if len(pages_json.encode("utf-8")) > MAX_EXPORT_JSON_BYTES:
+        raise HTTPException(status_code=413, detail="pages_json exceeds 10 MB limit")
+
+    try:
+        raw_pages = json.loads(pages_json)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=422, detail="Invalid pages_json") from exc
+
+    try:
+        return normalize_export_pages(raw_pages)
+    except ExportPayloadError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.post("/searchable-pdf")
@@ -29,18 +56,12 @@ async def export_searchable_pdf(
 ) -> Response:
     filename = file.filename or "document.pdf"
     ext = Path(filename).suffix.lower()
+    pages = _parse_pages_json(pages_json)
 
     try:
-        pages = json.loads(pages_json)
-    except json.JSONDecodeError as exc:
-        raise HTTPException(status_code=422, detail="Invalid pages_json") from exc
-
-    if not isinstance(pages, list) or not pages:
-        raise HTTPException(status_code=422, detail="pages_json must be a non-empty array")
-
-    data = await file.read()
-    if len(data) > MAX_EXPORT_BYTES:
-        raise HTTPException(status_code=413, detail="File exceeds 100 MB export limit")
+        data = await read_upload_limited(file, MAX_EXPORT_BYTES)
+    except UploadTooLargeError as exc:
+        raise HTTPException(status_code=413, detail="File exceeds 100 MB export limit") from exc
 
     try:
         if ext == ".pdf":
@@ -60,14 +81,15 @@ async def export_searchable_pdf(
     except SearchablePDFError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Export failed: {exc}") from exc
+        logger.exception("Searchable PDF export failed for %s", filename)
+        raise HTTPException(status_code=500, detail="Export failed") from exc
 
     stem = Path(filename).stem
     out_name = f"{stem}_searchable.pdf"
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{out_name}"'},
+        headers=attachment_headers(out_name),
     )
 
 
@@ -76,14 +98,7 @@ async def export_docx(
     pages_json: str = Form(...),
     title: str = Form(""),
 ) -> Response:
-    try:
-        pages = json.loads(pages_json)
-    except json.JSONDecodeError as exc:
-        raise HTTPException(status_code=422, detail="Invalid pages_json") from exc
-
-    if not isinstance(pages, list) or not pages:
-        raise HTTPException(status_code=422, detail="pages_json must be a non-empty array")
-
+    pages = _parse_pages_json(pages_json)
     doc_title = title.strip() or "OCR Export"
 
     try:
@@ -91,12 +106,12 @@ async def export_docx(
     except DOCXExportError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Export failed: {exc}") from exc
+        logger.exception("DOCX export failed")
+        raise HTTPException(status_code=500, detail="Export failed") from exc
 
-    safe_title = "".join(c if c.isalnum() or c in " -_" else "_" for c in doc_title)[:80]
-    out_name = f"{safe_title or 'export'}.docx"
+    out_name = f"{doc_title or 'export'}.docx"
     return Response(
         content=docx_bytes,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        headers={"Content-Disposition": f'attachment; filename="{out_name}"'},
+        headers=attachment_headers(out_name),
     )

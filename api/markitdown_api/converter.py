@@ -7,7 +7,13 @@ from pathlib import Path
 
 from markitdown import MarkItDown
 
-from markitdown_api.config import Engine, Settings, engine_availability
+from markitdown_api.config import (
+    Engine,
+    IMAGE_EXTENSIONS,
+    PAGE_IMAGE_OCR_ENGINES,
+    Settings,
+    engine_availability,
+)
 
 
 class EngineUnavailableError(Exception):
@@ -28,6 +34,15 @@ def validate_extension(filename: str) -> str:
     if ext not in ALLOWED_EXTENSIONS:
         raise UnsupportedFileError(f"Unsupported file type: {ext or '(none)'}")
     return ext
+
+
+def validate_engine_for_file(filename: str, engine: Engine) -> None:
+    ext = validate_extension(filename)
+    if ext in IMAGE_EXTENSIONS and engine not in PAGE_IMAGE_OCR_ENGINES:
+        raise ValueError(
+            f"{engine.value} cannot OCR page images. Use Apple Vision in the app, "
+            "or choose an OCR-capable sidecar engine."
+        )
 
 
 def build_markitdown(engine: Engine, settings: Settings) -> MarkItDown:
@@ -63,7 +78,7 @@ def convert_upload(
     if not data:
         raise ValueError("Empty file")
 
-    validate_extension(filename)
+    validate_engine_for_file(filename, engine)
     ensure_engine_available(engine, settings)
 
     stream = BytesIO(data)

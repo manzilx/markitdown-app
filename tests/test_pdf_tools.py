@@ -9,7 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from markitdown_api.main import app
-from markitdown_api.pdf_tools import combine_pdfs, extract_page_range
+from markitdown_api.pdf_tools import PDFToolsError, combine_pdfs, extract_page_range
 
 
 def _pdf_with_pages(count: int, label: str) -> bytes:
@@ -70,3 +70,33 @@ def test_split_endpoint():
     doc = pymupdf.open(stream=resp.content, filetype="pdf")
     assert doc.page_count == 2
     doc.close()
+
+
+def test_combine_rejects_invalid_pdf():
+    with pytest.raises(PDFToolsError, match="valid PDF"):
+        combine_pdfs([_pdf_with_pages(1, "Good"), b"not a pdf"])
+
+
+def test_combine_endpoint_rejects_invalid_pdf():
+    client = TestClient(app)
+    good = _pdf_with_pages(1, "Good")
+    resp = client.post(
+        "/v1/pdf/combine",
+        files=[
+            ("files", ("good.pdf", good, "application/pdf")),
+            ("files", ("bad.pdf", b"not a pdf", "application/pdf")),
+        ],
+    )
+    assert resp.status_code == 400
+    assert "valid PDF" in resp.json()["detail"]
+
+
+def test_split_endpoint_rejects_invalid_pdf():
+    client = TestClient(app)
+    resp = client.post(
+        "/v1/pdf/split",
+        files={"file": ("bad.pdf", b"not a pdf", "application/pdf")},
+        data={"start_page": "1", "end_page": "1"},
+    )
+    assert resp.status_code == 400
+    assert "valid PDF" in resp.json()["detail"]

@@ -7,7 +7,8 @@ import io
 import pytest
 from fastapi.testclient import TestClient
 
-from markitdown_api.config import MAX_UPLOAD_BYTES, get_settings
+from markitdown_api.config import MAX_UPLOAD_BYTES, Engine, get_settings
+from markitdown_api.converter import validate_extension
 from markitdown_api.main import app
 
 
@@ -32,6 +33,10 @@ def test_list_engines(client: TestClient) -> None:
     assert ids == {"builtin", "azure_doc_intel", "pymupdf4llm", "ocr_plugin"}
     builtin = next(e for e in data["engines"] if e["id"] == "builtin")
     assert builtin["available"] is True
+    assert builtin["supports_ocr"] is False
+    assert next(e for e in data["engines"] if e["id"] == "pymupdf4llm")["supports_ocr"] is False
+    assert next(e for e in data["engines"] if e["id"] == "azure_doc_intel")["supports_ocr"] is True
+    assert next(e for e in data["engines"] if e["id"] == "ocr_plugin")["supports_ocr"] is True
 
 
 def test_convert_txt_builtin(client: TestClient) -> None:
@@ -56,6 +61,22 @@ def test_convert_csv_builtin(client: TestClient) -> None:
     )
     assert resp.status_code == 200
     assert "foo" in resp.json()["markdown"]
+
+
+def test_sidecar_page_image_extensions_are_allowed() -> None:
+    assert validate_extension("page-1.png") == ".png"
+    assert validate_extension("page-2.jpg") == ".jpg"
+    assert validate_extension("page-3.tiff") == ".tiff"
+
+
+def test_convert_image_with_non_ocr_engine_is_rejected(client: TestClient) -> None:
+    resp = client.post(
+        "/v1/convert",
+        files={"file": ("page-1.png", io.BytesIO(b"not really an image"), "image/png")},
+        data={"engine": "builtin"},
+    )
+    assert resp.status_code == 400
+    assert "cannot OCR page images" in resp.json()["detail"]
 
 
 def test_unsupported_extension(client: TestClient) -> None:
@@ -95,3 +116,21 @@ def test_unknown_engine(client: TestClient) -> None:
         data={"engine": "not-a-real-engine"},
     )
     assert resp.status_code == 422
+
+
+def test_convert_internal_error_is_sanitized(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_conversion(*args: object, **kwargs: object) -> str:
+        raise RuntimeError("secret backend detail")
+
+    monkeypatch.setattr("markitdown_api.main.convert_upload", fail_conversion)
+    resp = client.post(
+        "/v1/convert",
+        files={"file": ("notes.txt", io.BytesIO(b"hi"), "text/plain")},
+        data={"engine": Engine.BUILTIN.value},
+    )
+    assert resp.status_code == 500
+    assert resp.json()["detail"] == "Conversion failed"
+    assert "secret" not in resp.text
