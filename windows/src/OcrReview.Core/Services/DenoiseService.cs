@@ -15,7 +15,7 @@ public static class DenoiseService
 {
     public enum Zone { Top, Bottom }
 
-    public enum Reason { RepeatedEdgeText, PageNumber }
+    public enum Reason { RepeatedEdgeText, PageNumber, Watermark }
 
     /// <summary>Stable key for the page-number candidate group (all page-number shaped
     /// lines toggle together; repeated header/footer lines each get their normalized key).</summary>
@@ -131,6 +131,7 @@ public static class DenoiseService
         if (pages.Count == 0) return new Plan();
 
         var stats = new Dictionary<string, CandidateStats>();
+        var watermarkStats = new Dictionary<string, CandidateStats>();
         var pageLines = new Dictionary<int, List<LineInfo>>();
         var pageNumberShapedPages = new HashSet<int>();
 
@@ -140,7 +141,15 @@ public static class DenoiseService
             pageLines[page.PageNumber] = lines;
             foreach (var line in lines)
             {
-                if (line.Zone is null || line.Trimmed.Length == 0) continue;
+                if (line.Trimmed.Length == 0) continue;
+                // Watermark stamps (CONFIDENTIAL, DRAFT, COPY …) sit anywhere on the
+                // page, so they are tracked independent of the edge zones.
+                if (IsWatermarkText(line.Trimmed))
+                {
+                    if (!watermarkStats.TryGetValue(line.NormalizedKey, out var w)) watermarkStats[line.NormalizedKey] = w = new CandidateStats();
+                    w.Record(line, page.PageNumber);
+                }
+                if (line.Zone is null) continue;
                 if (IsRepeatCandidate(line.NormalizedKey))
                 {
                     if (!stats.TryGetValue(line.NormalizedKey, out var s)) stats[line.NormalizedKey] = s = new CandidateStats();
@@ -161,6 +170,12 @@ public static class DenoiseService
         // offsets, and re-numbered scans are common).
         var pageNumberRecurThreshold = Math.Max(2, (int)Math.Ceiling(pages.Count * 0.3));
         var pageNumbersRecur = pageNumberShapedPages.Count >= Math.Min(pageNumberRecurThreshold, pages.Count);
+
+        var watermarkThreshold = Math.Max(2, (int)Math.Ceiling(pages.Count * 0.3));
+        var watermarkKeys = watermarkStats
+            .Where(kv => kv.Value.Pages.Count >= Math.Min(watermarkThreshold, pages.Count))
+            .Select(kv => kv.Key)
+            .ToHashSet();
 
         var candidatesByKey = new Dictionary<string, Candidate>();
         foreach (var key in repeatedKeys)
@@ -185,16 +200,21 @@ public static class DenoiseService
 
             foreach (var line in lines)
             {
-                if (line.Zone is not { } zone || line.Trimmed.Length == 0) continue;
-                Reason? reason;
-                if (IsExplicitIndexPageNumber(line.Trimmed, page.PageNumber, document.TotalPageCount))
-                    reason = Reason.PageNumber;
-                else if (pageNumbersRecur && IsPageNumberShape(line.Trimmed))
-                    reason = Reason.PageNumber;
-                else if (repeatedKeys.Contains(line.NormalizedKey))
-                    reason = Reason.RepeatedEdgeText;
-                else
-                    reason = null;
+                if (line.Trimmed.Length == 0) continue;
+                Reason? reason = null;
+                // Watermarks are removable anywhere on the page; everything else
+                // requires an edge zone.
+                if (watermarkKeys.Contains(line.NormalizedKey) && IsWatermarkText(line.Trimmed))
+                    reason = Reason.Watermark;
+                else if (line.Zone is not null)
+                {
+                    if (IsExplicitIndexPageNumber(line.Trimmed, page.PageNumber, document.TotalPageCount))
+                        reason = Reason.PageNumber;
+                    else if (pageNumbersRecur && IsPageNumberShape(line.Trimmed))
+                        reason = Reason.PageNumber;
+                    else if (repeatedKeys.Contains(line.NormalizedKey))
+                        reason = Reason.RepeatedEdgeText;
+                }
 
                 if (reason is null) continue;
                 keptIndexes.Remove(line.OriginalIndex);
@@ -202,7 +222,7 @@ public static class DenoiseService
                 {
                     Text = line.Trimmed,
                     Reason = reason.Value,
-                    Zone = zone,
+                    Zone = line.Zone ?? Zone.Top,
                     NormalizedKey = line.NormalizedKey,
                     OriginalIndex = line.OriginalIndex,
                 });
@@ -231,6 +251,26 @@ public static class DenoiseService
             .Select(l => l.NormalizedKey)
             .ToHashSet();
         candidatesByKey = candidatesByKey.Where(kv => usedRepeatedKeys.Contains(kv.Key)).ToDictionary(kv => kv.Key, kv => kv.Value);
+
+        // Watermark candidates: one toggle per distinct stamp. They share the key
+        // space with repeated-text candidates; the removal loop labels these lines
+        // Watermark first, so a stamp never appears as two candidates.
+        var usedWatermarkKeys = results.Values
+            .SelectMany(r => r.RemovedLines.Where(l => l.Reason == Reason.Watermark))
+            .Select(l => l.NormalizedKey)
+            .ToHashSet();
+        foreach (var key in usedWatermarkKeys)
+        {
+            if (!watermarkStats.TryGetValue(key, out var w)) continue;
+            candidatesByKey[key] = new Candidate
+            {
+                Key = key,
+                DisplayText = w.DisplayText,
+                Pages = w.Pages.ToHashSet(),
+                Reason = Reason.Watermark,
+                Samples = w.Examples.ToList(),
+            };
+        }
 
         var pageNumberRemovals = results.Values
             .SelectMany(r => r.RemovedLines.Where(l => l.Reason == Reason.PageNumber))
@@ -320,10 +360,19 @@ public static class DenoiseService
             .Select(l => l.NormalizedKey).ToHashSet();
         var pageNumberTexts = removals.Where(l => l.Reason == Reason.PageNumber)
             .Select(l => l.Text).ToHashSet(StringComparer.Ordinal);
+        var watermarkKeys = removals.Where(l => l.Reason == Reason.Watermark)
+            .Select(l => l.NormalizedKey).ToHashSet();
         foreach (var block in page.Blocks)
         {
             var text = block.Text.Trim();
-            if (text.Length == 0 || !BlockIsEdge(block)) continue;
+            if (text.Length == 0) continue;
+            // Watermark stamps can sit anywhere; edge noise only at the edges.
+            if (watermarkKeys.Contains(NormalizedKey(text)) && IsWatermarkText(text))
+            {
+                block.Text = "";
+                continue;
+            }
+            if (!BlockIsEdge(block)) continue;
             if (repeatedKeys.Contains(NormalizedKey(text)) || pageNumberTexts.Contains(text)) block.Text = "";
         }
     }
@@ -382,9 +431,21 @@ public static class DenoiseService
     private static bool IsRepeatCandidate(string key) =>
         key.Length >= 4 && key.Any(char.IsLetter);
 
+    /// <summary>Month and weekday names (English + French, with common abbreviations)
+    /// fold to "#" like digits do, so date-stamped footers ("Printed 12 May 2024" vs
+    /// "Printed 13 June 2024") share one normalized key and recur like any header.</summary>
+    private static readonly Regex DateWordsRegex = new(
+        "\\b(january|february|march|april|may|june|july|august|september|october|november|december|"
+        + "jan|feb|mar|apr|jun|jul|aug|sept|sep|oct|nov|dec|"
+        + "monday|tuesday|wednesday|thursday|friday|saturday|sunday|"
+        + "janvier|fevrier|mars|avril|mai|juin|juillet|aout|septembre|octobre|novembre|decembre|"
+        + "lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche)\\b",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
     private static string NormalizedKey(string text)
     {
         var folded = FoldDiacritics(text).ToLowerInvariant();
+        folded = DateWordsRegex.Replace(folded, "#");
         folded = Regex.Replace(folded, "\\d+", "#");
         folded = Regex.Replace(folded, "#+", "#");
         var sb = new StringBuilder(folded.Length);
@@ -446,6 +507,27 @@ public static class DenoiseService
         if (stripped.Length == 0 || stripped.Length > 10) return false;
         const string roman = "^(?=[mdclxvi])m{0,3}(cm|cd|d?c{0,3})(xc|xl|l?x{0,3})(ix|iv|v?i{0,3})$";
         return Regex.IsMatch(stripped, roman, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    }
+
+    /// <summary>Whole-line watermark/stamp phrases (English + French). Strict whole-line
+    /// matching after stripping decoration — "the copy machine" is body text, "*** COPY ***"
+    /// is a stamp. Used only when the stamp recurs across pages (or on 1-page docs).</summary>
+    private static readonly HashSet<string> WatermarkPhrases = new(StringComparer.Ordinal)
+    {
+        "confidential", "strictly confidential", "draft", "copy", "certified copy",
+        "true copy", "specimen", "sample", "void", "duplicate", "duplicata", "copie",
+        "confidentiel", "brouillon", "do not copy", "not for distribution",
+        "internal use only", "for internal use only", "uncontrolled copy",
+        "uncontrolled when printed",
+    };
+
+    private static bool IsWatermarkText(string trimmed)
+    {
+        if (trimmed.Length == 0 || trimmed.Length > 40) return false;
+        var stripped = trimmed.Trim('-', '–', '—', '•', '·', '*', '#', '_', '~', ' ', '\t', '(', ')', '[', ']', '{', '}');
+        if (stripped.Length == 0) return false;
+        var folded = Regex.Replace(FoldDiacritics(stripped).ToLowerInvariant(), "\\s+", " ");
+        return WatermarkPhrases.Contains(folded);
     }
 
     private static bool BlockIsEdge(OcrBlock block)

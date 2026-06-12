@@ -139,6 +139,58 @@ public class DenoiseServiceTests
     }
 
     [Fact]
+    public void Removes_date_stamped_footer_with_varying_months()
+    {
+        // Same footer template but the month NAME varies — digits alone can't cluster these.
+        var months = new[] { "January", "February", "March", "April", "May", "June", "July", "August", "September", "October" };
+        var texts = Enumerable.Range(1, 10)
+            .Select(n => Page(n, null, $"Printed on {n + 3} {months[n - 1]} 2024 at 14:0{n % 10}"))
+            .ToList();
+        var result = DenoiseService.Apply(Doc(texts));
+        Assert.True(result.Plan.RemovedLineCount >= 10);
+        foreach (var p in result.Document.Pages)
+        {
+            Assert.DoesNotContain("Printed on", p.DisplayText);
+            Assert.Contains("section reviews", p.DisplayText);
+        }
+    }
+
+    [Fact]
+    public void Removes_midpage_watermark_stamp()
+    {
+        // A stamp OCR'd into the middle of the page is outside the edge zones.
+        var texts = new List<string>();
+        for (int n = 1; n <= 10; n++)
+        {
+            var lines = UniqueBody(n, 4);
+            lines.Add("*** CONFIDENTIAL ***");
+            lines.AddRange(UniqueBody(n + 100, 4));
+            // Body sentence CONTAINING a stamp word must survive (not a whole-line match).
+            lines.Add($"Please copy the {Pool[n % Pool.Length]} ledger today.");
+            lines.AddRange(UniqueBody(n + 200, 3));
+            texts.Add(string.Join("\n", lines));
+        }
+        var result = DenoiseService.Apply(Doc(texts));
+        Assert.True(result.Plan.RemovedLineCount >= 10);
+        Assert.Contains(result.Plan.Candidates, c => c.Reason == DenoiseService.Reason.Watermark);
+        foreach (var p in result.Document.Pages)
+        {
+            Assert.DoesNotContain("CONFIDENTIAL", p.DisplayText);
+            Assert.Contains("Please copy the", p.DisplayText);
+        }
+    }
+
+    [Fact]
+    public void Lone_watermark_word_on_one_page_of_many_is_kept()
+    {
+        // "DRAFT" on a single page of a 10-page doc doesn't recur — leave it.
+        var texts = Enumerable.Range(1, 10).Select(n => Page(n, null, null)).ToList();
+        texts[4] = "DRAFT\n" + texts[4];
+        var result = DenoiseService.Apply(Doc(texts));
+        Assert.Equal(0, result.Plan.RemovedLineCount);
+    }
+
+    [Fact]
     public void Never_empties_a_page()
     {
         var texts = Enumerable.Range(1, 10).Select(n => $"REPEATED HEADER\n{n}").ToList();
