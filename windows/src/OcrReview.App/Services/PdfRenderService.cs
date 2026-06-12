@@ -61,7 +61,19 @@ public sealed class PdfRenderService
                 stream.Seek(0);
                 return ToBitmap(stream);
             }
-            return _imagePath != null ? LoadImageFile(_imagePath) : null;
+            if (_imagePath == null) return null;
+            // Decode through the SAME WinRT path as OCR (EXIF rotation applied), so a
+            // phone photo displays upright and the OCR bounding boxes line up with what
+            // the user sees. WPF's BitmapImage ignores EXIF and would mismatch.
+            var sb = await DecodeImageAsync(_imagePath);
+            if (sb == null) return LoadImageFile(_imagePath);
+            using var ras = new InMemoryRandomAccessStream();
+            var encoder = await Windows.Graphics.Imaging.BitmapEncoder.CreateAsync(
+                Windows.Graphics.Imaging.BitmapEncoder.PngEncoderId, ras);
+            encoder.SetSoftwareBitmap(sb);
+            await encoder.FlushAsync();
+            ras.Seek(0);
+            return ToBitmap(ras);
         }
         finally { _lock.Release(); }
     }
@@ -104,35 +116,48 @@ public sealed class PdfRenderService
 
     private async Task<SoftwareBitmap?> RenderSoftwareBitmapCoreAsync(int index, double pixelWidth)
     {
-        IRandomAccessStream? stream = null;
-        try
+        if (_pdf != null)
         {
-            if (_pdf != null)
-            {
-                if (index < 0 || index >= (int)_pdf.PageCount) return null;
-                using var page = _pdf.GetPage((uint)index);
-                var mem = new InMemoryRandomAccessStream();
-                await page.RenderToStreamAsync(mem, new PdfPageRenderOptions { DestinationWidth = (uint)Math.Max(pixelWidth, 1) });
-                mem.Seek(0);
-                stream = mem;
-            }
-            else if (_imagePath != null)
-            {
-                var file = await StorageFile.GetFileFromPathAsync(_imagePath);
-                stream = await file.OpenAsync(FileAccessMode.Read);
-            }
-            else
-            {
-                return null;
-            }
+            if (index < 0 || index >= (int)_pdf.PageCount) return null;
+            using var page = _pdf.GetPage((uint)index);
+            using var mem = new InMemoryRandomAccessStream();
+            await page.RenderToStreamAsync(mem, new PdfPageRenderOptions { DestinationWidth = (uint)Math.Max(pixelWidth, 1) });
+            mem.Seek(0);
+            var decoder = await Windows.Graphics.Imaging.BitmapDecoder.CreateAsync(mem);
+            return await decoder.GetSoftwareBitmapAsync(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied);
+        }
+        return _imagePath != null ? await DecodeImageAsync(_imagePath) : null;
+    }
 
-            var decoder = await Windows.Graphics.Imaging.BitmapDecoder.CreateAsync(stream);
-            return await decoder.GetSoftwareBitmapAsync();
-        }
-        finally
+    /// <summary>OCR engine dimension cap (OcrEngine.MaxImageDimension is typically
+    /// larger, but huge scans waste memory and 16-bit/odd formats throw). Images decode
+    /// to Bgra8 with EXIF rotation applied and are downscaled past this size.</summary>
+    private const uint MaxImageDimension = 7500;
+
+    private static async Task<SoftwareBitmap?> DecodeImageAsync(string path)
+    {
+        var file = await StorageFile.GetFileFromPathAsync(path);
+        using var stream = await file.OpenAsync(FileAccessMode.Read);
+        var decoder = await Windows.Graphics.Imaging.BitmapDecoder.CreateAsync(stream);
+
+        // OrientedPixelWidth/Height account for the EXIF rotation we're about to apply.
+        uint w = decoder.OrientedPixelWidth, h = decoder.OrientedPixelHeight;
+        var transform = new BitmapTransform();
+        if (w > MaxImageDimension || h > MaxImageDimension)
         {
-            stream?.Dispose();
+            double scale = Math.Min((double)MaxImageDimension / w, (double)MaxImageDimension / h);
+            transform.ScaledWidth = (uint)Math.Max(w * scale, 1);
+            transform.ScaledHeight = (uint)Math.Max(h * scale, 1);
         }
+
+        // Bgra8 + EXIF rotation: Windows OCR rejects some native formats outright
+        // ("unspecified error"), and un-rotated phone photos OCR sideways.
+        return await decoder.GetSoftwareBitmapAsync(
+            BitmapPixelFormat.Bgra8,
+            BitmapAlphaMode.Premultiplied,
+            transform,
+            ExifOrientationMode.RespectExifOrientation,
+            ColorManagementMode.DoNotColorManage);
     }
 
     private static BitmapSource ToBitmap(IRandomAccessStream ras)
