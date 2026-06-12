@@ -1,6 +1,7 @@
 using OcrReview.Core;
 using OcrReview.Core.Abstractions;
 using OcrReview.Core.Models;
+using OcrReview.Core.Services;
 using Windows.Graphics.Imaging;
 using Windows.Media.Ocr;
 
@@ -60,9 +61,9 @@ public sealed class WindowsOcrService
         int width = bitmap.PixelWidth;
         int height = bitmap.PixelHeight;
 
-        var blocks = new List<OcrBlock>();
-        var lines = new List<string>();
-
+        // First pass: measure each engine line. The engine's line order is not reading
+        // order (same-row fragments and columns come back scrambled), so sort before emitting.
+        var measured = new List<(string Text, double MinX, double MinY, double MaxX, double MaxY, bool HasBox)>();
         foreach (var line in result.Lines)
         {
             double minX = double.MaxValue, minY = double.MaxValue, maxX = double.MinValue, maxY = double.MinValue;
@@ -76,22 +77,36 @@ public sealed class WindowsOcrService
                 maxX = Math.Max(maxX, r.X + r.Width);
                 maxY = Math.Max(maxY, r.Y + r.Height);
             }
+            measured.Add((line.Text, minX, minY, maxX, maxY, any));
+        }
 
+        var boxed = measured.Where(m => m.HasBox).ToList();
+        var ordered = ReadingOrderService
+            .Order(boxed.Select(m => (m.MinX, m.MinY, m.MaxX - m.MinX, m.MaxY - m.MinY)).ToList())
+            .Select(i => boxed[i])
+            .Concat(measured.Where(m => !m.HasBox))
+            .ToList();
+
+        var blocks = new List<OcrBlock>();
+        var lines = new List<string>();
+
+        foreach (var m in ordered)
+        {
             double[]? bbox = null;
-            if (any && width > 0 && height > 0)
+            if (m.HasBox && width > 0 && height > 0)
             {
-                double nx = minX / width;
-                double nw = (maxX - minX) / width;
-                double nh = (maxY - minY) / height;
-                double nyBottomLeft = 1.0 - (maxY / height); // convert top-left pixel origin → bottom-left normalized
+                double nx = m.MinX / width;
+                double nw = (m.MaxX - m.MinX) / width;
+                double nh = (m.MaxY - m.MinY) / height;
+                double nyBottomLeft = 1.0 - (m.MaxY / height); // convert top-left pixel origin → bottom-left normalized
                 bbox = new[] { nx, nyBottomLeft, nw, nh };
             }
 
-            var issues = _spell.Issues(line.Text);
+            var issues = _spell.Issues(m.Text);
             float confidence = issues.Count > 0 ? OcrConstants.SuspectConfidence : 1f;
 
-            blocks.Add(new OcrBlock { Text = line.Text, Confidence = confidence, BboxNormalized = bbox });
-            lines.Add(line.Text);
+            blocks.Add(new OcrBlock { Text = m.Text, Confidence = confidence, BboxNormalized = bbox });
+            lines.Add(m.Text);
         }
 
         return new OcrPage
