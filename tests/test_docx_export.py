@@ -183,6 +183,59 @@ def test_plain_paragraph_pages_produce_no_tables():
     assert len(doc.tables) == 0
 
 
+def test_right_aligned_numeric_columns_form_a_table():
+    # Invoice-style: descriptions left-aligned, amounts RIGHT-aligned (left edges
+    # scatter with number width; right edges line up at 0.80).
+    page = {
+        "page_number": 1,
+        "ocr_text": "x",
+        "blocks": [
+            _block("Consulting services", 0.08, 0.80, 0.30, 0.014),
+            _block("1 250,00", 0.66, 0.80, 0.14, 0.014),       # right = 0.80
+            _block("Travel expenses", 0.08, 0.775, 0.25, 0.014),
+            _block("980,50", 0.70, 0.775, 0.10, 0.014),        # right = 0.80
+            _block("Total", 0.08, 0.75, 0.10, 0.014),
+            _block("2 230,50", 0.655, 0.75, 0.145, 0.014),     # right = 0.80
+        ],
+    }
+    out = build_docx([page])
+    doc = Document(io.BytesIO(out))
+    assert len(doc.tables) == 1
+    table = doc.tables[0]
+    assert len(table.rows) == 3
+    assert len(table.columns) == 2
+    assert "1 250,00" in table.cell(0, 1).text
+    assert "980,50" in table.cell(1, 1).text
+    assert "2 230,50" in table.cell(2, 1).text
+
+
+def test_wrapped_cell_value_merges_into_previous_row():
+    # Row 1's value wraps onto a second line sitting at the value column.
+    page = {
+        "page_number": 1,
+        "ocr_text": "x",
+        "blocks": [
+            _block("Address", 0.08, 0.800, 0.15, 0.014),
+            _block("167 Quai la Bataille", 0.40, 0.800, 0.35, 0.014),
+            _block("92130 Issy-les-Moulineaux", 0.40, 0.780, 0.33, 0.014),  # continuation
+            _block("Manager", 0.08, 0.755, 0.15, 0.014),
+            _block("POT Nicolas", 0.40, 0.755, 0.25, 0.014),
+            # Footer at the LEFT column position must NOT be absorbed as continuation.
+            _block("End of section marker text", 0.08, 0.700, 0.40, 0.014),
+        ],
+    }
+    out = build_docx([page])
+    doc = Document(io.BytesIO(out))
+    assert len(doc.tables) == 1
+    table = doc.tables[0]
+    assert len(table.rows) == 2, "wrapped line must merge, not create a third row"
+    assert "167 Quai la Bataille" in table.cell(0, 1).text
+    assert "92130 Issy-les-Moulineaux" in table.cell(0, 1).text
+    assert "POT Nicolas" in table.cell(1, 1).text
+    para_text = "\n".join(p.text for p in doc.paragraphs)
+    assert "End of section marker text" in para_text, "left-edge footer must stay a paragraph"
+
+
 def test_body_font_sizes_are_quantized_to_one_class():
     # Slightly jittery line heights (±8%) must export at ONE consistent size.
     page = {
