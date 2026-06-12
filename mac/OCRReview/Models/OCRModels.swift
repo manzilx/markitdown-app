@@ -100,9 +100,7 @@ struct OCRPage: Identifiable, Codable, Equatable {
     var exportText: String {
         let redacted = blocks.filter(\.isRedacted)
         guard !redacted.isEmpty else { return displayText }
-        let kept = blocks
-            .filter { !$0.isRedacted }
-            .sorted { $0.sortY > $1.sortY }
+        let kept = ReadingOrder.sorted(blocks: blocks.filter { !$0.isRedacted })
             .map(\.text)
             .filter { !$0.isEmpty }
         return kept.joined(separator: "\n")
@@ -117,10 +115,7 @@ struct OCRPage: Identifiable, Codable, Equatable {
     }
 
     mutating func syncEditedTextFromBlocks() {
-        let sorted = blocks.sorted {
-            $0.sortY > $1.sortY
-        }
-        editedText = sorted.map(\.text).joined(separator: "\n")
+        editedText = ReadingOrder.sorted(blocks: blocks).map(\.text).joined(separator: "\n")
     }
 
     var lowConfidenceBlocks: [OCRBlock] {
@@ -129,9 +124,7 @@ struct OCRPage: Identifiable, Codable, Equatable {
 
     /// Low-confidence blocks ordered top-to-bottom for review navigation.
     var issuesInReadingOrder: [OCRBlock] {
-        lowConfidenceBlocks.sorted {
-            $0.sortY > $1.sortY
-        }
+        ReadingOrder.sorted(blocks: lowConfidenceBlocks)
     }
 
     var hasEdits: Bool {

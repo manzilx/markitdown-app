@@ -13,6 +13,7 @@
 		30DB227B2A6BD59447ADAEEF /* PageStructureService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 84BD3A7E900A4519C80568E1 /* PageStructureService.swift */; };
 		3B6C954F14B86D63BCA55D84 /* OCRModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09FDD318D436760F7A6B79C4 /* OCRModels.swift */; };
 		3D7DC5AB47A0367D8FE65BE9 /* OCRSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E0A3039A2FA93F7F2B710AB /* OCRSettings.swift */; };
+		3EB98C8EE5DE3BBC38EEC68A /* ReadingOrder.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3E44E8310EA3327949F5A5E /* ReadingOrder.swift */; };
 		3FBE87C142C3965E8F00799F /* BBoxCoordinateMapper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1374318AFBCFD08AF3DBAFDD /* BBoxCoordinateMapper.swift */; };
 		417CDAD00B0C914D06218D40 /* OCRReviewApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = D390CFFF0F7DD29460B64109 /* OCRReviewApp.swift */; };
 		46D907BC212C1DEFCF7894D8 /* PDFToolsService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5081BC21786E2F2910CCDB37 /* PDFToolsService.swift */; };
@@ -36,6 +37,7 @@
 		D65ACAACBB39103B19F35838 /* SpellSuggestionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8987C477A327CCC2A8B26155 /* SpellSuggestionsView.swift */; };
 		E4978250BDC073F0FB1920A5 /* EngineSidecarClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 713B480B6249FD3B06C37284 /* EngineSidecarClient.swift */; };
 		E5D0CDA2178A9CEB51CCB9A1 /* Reliability.swift in Sources */ = {isa = PBXBuildFile; fileRef = C98F4A9FCB250CFD6BA283AD /* Reliability.swift */; };
+		E75DB48F191C5CA45488F774 /* ReadingOrderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D955F25F7D629AA437612289 /* ReadingOrderTests.swift */; };
 		EAD46605DDC16CF47ABC6CAC /* SpellcheckService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5643122EFFFAE37B70AEB9FA /* SpellcheckService.swift */; };
 		ECB3D721EEAFC64A95783AE5 /* PageThumbnailStrip.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5C7DF94AB7A27F136C3D4FB /* PageThumbnailStrip.swift */; };
 		F638307494B80966617672CA /* DocumentLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 978AE965B9AD371C77432B5B /* DocumentLoader.swift */; };
@@ -86,8 +88,10 @@
 		C98F4A9FCB250CFD6BA283AD /* Reliability.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Reliability.swift; sourceTree = "<group>"; };
 		D2D85B0C24319651B1621DBA /* OCRReview.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OCRReview.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		D390CFFF0F7DD29460B64109 /* OCRReviewApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OCRReviewApp.swift; sourceTree = "<group>"; };
+		D955F25F7D629AA437612289 /* ReadingOrderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadingOrderTests.swift; sourceTree = "<group>"; };
 		DCAF572BC118D40777408602 /* DenoiseServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DenoiseServiceTests.swift; sourceTree = "<group>"; };
 		E01BD0202FCCD4D99125AF16 /* OCRReviewTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = OCRReviewTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		E3E44E8310EA3327949F5A5E /* ReadingOrder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadingOrder.swift; sourceTree = "<group>"; };
 		EF28BF40E6B5C91DF15F8D26 /* JobStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JobStore.swift; sourceTree = "<group>"; };
 		FECECC429CDFFFFF09FF1949 /* FindService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FindService.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -132,6 +136,7 @@
 				3E0A3039A2FA93F7F2B710AB /* OCRSettings.swift */,
 				84BD3A7E900A4519C80568E1 /* PageStructureService.swift */,
 				5081BC21786E2F2910CCDB37 /* PDFToolsService.swift */,
+				E3E44E8310EA3327949F5A5E /* ReadingOrder.swift */,
 				C98F4A9FCB250CFD6BA283AD /* Reliability.swift */,
 				1506852E83F397CE200284E8 /* SidecarOCRService.swift */,
 				661601D54AA1640587F73989 /* SidecarProcessManager.swift */,
@@ -146,6 +151,7 @@
 			isa = PBXGroup;
 			children = (
 				DCAF572BC118D40777408602 /* DenoiseServiceTests.swift */,
+				D955F25F7D629AA437612289 /* ReadingOrderTests.swift */,
 			);
 			path = OCRReviewTests;
 			sourceTree = "<group>";
@@ -294,6 +300,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A02F2ADB5E2533E01818EBF1 /* DenoiseServiceTests.swift in Sources */,
+				E75DB48F191C5CA45488F774 /* ReadingOrderTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -323,6 +330,7 @@
 				46D907BC212C1DEFCF7894D8 /* PDFToolsService.swift in Sources */,
 				30DB227B2A6BD59447ADAEEF /* PageStructureService.swift in Sources */,
 				ECB3D721EEAFC64A95783AE5 /* PageThumbnailStrip.swift in Sources */,
+				3EB98C8EE5DE3BBC38EEC68A /* ReadingOrder.swift in Sources */,
 				E5D0CDA2178A9CEB51CCB9A1 /* Reliability.swift in Sources */,
 				D520D5B2993CE3084C065230 /* ReviewWorkspaceView.swift in Sources */,
 				C287FD8BDA95BB31DA8F5D12 /* SidecarOCRService.swift in Sources */,

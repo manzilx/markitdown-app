@@ -133,9 +133,13 @@ enum VisionOCRService {
                 var blocks: [OCRBlock] = []
                 var lines: [String] = []
 
-                for observation in observations.sorted(by: { a, b in
-                    a.boundingBox.minY > b.boundingBox.minY
-                }) {
+                // Reading order: a plain Y sort swaps same-row cells under baseline
+                // jitter and scrambles columns; group into visual rows instead.
+                let rects = observations.map { obs -> [Double] in
+                    let box = obs.boundingBox
+                    return [Double(box.origin.x), Double(box.origin.y), Double(box.width), Double(box.height)]
+                }
+                for observation in ReadingOrder.order(boxes: rects).map({ observations[$0] }) {
                     guard let candidate = observation.topCandidates(1).first else { continue }
                     let box = observation.boundingBox
                     blocks.append(
