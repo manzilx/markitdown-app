@@ -9,6 +9,7 @@ enum DenoiseService {
     enum Reason: String {
         case repeatedEdgeText
         case pageNumber
+        case watermark
     }
 
     /// Stable key for the page-number candidate group (all page-number shaped lines
@@ -137,13 +138,20 @@ enum DenoiseService {
         }
 
         var stats: [String: CandidateStats] = [:]
+        var watermarkStats: [String: CandidateStats] = [:]
         var pageLines: [Int: [LineInfo]] = [:]
         var pageNumberShapedPages = Set<Int>()
 
         for page in pages {
             let lines = lineInfos(for: page.displayText)
             pageLines[page.pageNumber] = lines
-            for line in lines where line.zone != nil && !line.trimmed.isEmpty {
+            for line in lines where !line.trimmed.isEmpty {
+                // Watermark stamps (CONFIDENTIAL, DRAFT, COPY …) sit anywhere on the
+                // page, so they are tracked independent of the edge zones.
+                if isWatermarkText(line.trimmed) {
+                    watermarkStats[line.normalizedKey, default: CandidateStats()].record(line: line, pageNumber: page.pageNumber)
+                }
+                guard line.zone != nil else { continue }
                 if isRepeatCandidate(line.normalizedKey) {
                     stats[line.normalizedKey, default: CandidateStats()].record(line: line, pageNumber: page.pageNumber)
                 }
@@ -167,6 +175,11 @@ enum DenoiseService {
         let pageNumberRecurThreshold = max(2, Int(ceil(Double(pages.count) * 0.3)))
         let pageNumbersRecur = pageNumberShapedPages.count >= min(pageNumberRecurThreshold, pages.count)
 
+        let watermarkThreshold = max(2, Int(ceil(Double(pages.count) * 0.3)))
+        let watermarkKeys = Set(watermarkStats.compactMap { key, value -> String? in
+            value.pages.count >= min(watermarkThreshold, pages.count) ? key : nil
+        })
+
         var candidatesByKey: [String: Candidate] = [:]
         for key in repeatedKeys {
             guard let value = stats[key] else { continue }
@@ -186,16 +199,20 @@ enum DenoiseService {
             var keptIndexes = Set(lines.map(\.originalIndex))
 
             for line in lines {
-                guard let zone = line.zone, !line.trimmed.isEmpty else { continue }
-                let reason: Reason?
-                if isExplicitIndexPageNumber(line.trimmed, pageNumber: page.pageNumber, totalPages: document.totalPageCount) {
-                    reason = .pageNumber
-                } else if pageNumbersRecur && isPageNumberShape(line.trimmed) {
-                    reason = .pageNumber
-                } else if repeatedKeys.contains(line.normalizedKey) {
-                    reason = .repeatedEdgeText
-                } else {
-                    reason = nil
+                guard !line.trimmed.isEmpty else { continue }
+                var reason: Reason?
+                // Watermarks are removable anywhere on the page; everything else
+                // requires an edge zone.
+                if watermarkKeys.contains(line.normalizedKey), isWatermarkText(line.trimmed) {
+                    reason = .watermark
+                } else if line.zone != nil {
+                    if isExplicitIndexPageNumber(line.trimmed, pageNumber: page.pageNumber, totalPages: document.totalPageCount) {
+                        reason = .pageNumber
+                    } else if pageNumbersRecur && isPageNumberShape(line.trimmed) {
+                        reason = .pageNumber
+                    } else if repeatedKeys.contains(line.normalizedKey) {
+                        reason = .repeatedEdgeText
+                    }
                 }
 
                 guard let reason else { continue }
@@ -204,7 +221,7 @@ enum DenoiseService {
                     RemovedLine(
                         text: line.trimmed,
                         reason: reason,
-                        zone: zone,
+                        zone: line.zone ?? .top,
                         normalizedKey: line.normalizedKey,
                         originalIndex: line.originalIndex
                     )
@@ -235,6 +252,24 @@ enum DenoiseService {
                 .map(\.normalizedKey)
         )
         candidatesByKey = candidatesByKey.filter { usedRepeatedKeys.contains($0.key) }
+
+        // Watermark candidates: one toggle per distinct stamp. They share the key
+        // space with repeated-text candidates; the removal loop labels these lines
+        // watermark first, so a stamp never appears as two candidates.
+        let usedWatermarkKeys = Set(
+            results.values.flatMap { $0.removedLines.filter { $0.reason == .watermark } }
+                .map(\.normalizedKey)
+        )
+        for key in usedWatermarkKeys {
+            guard let value = watermarkStats[key] else { continue }
+            candidatesByKey[key] = Candidate(
+                key: key,
+                displayText: value.displayText,
+                pages: value.pages,
+                reason: .watermark,
+                samples: value.examples
+            )
+        }
 
         let pageNumberRemovals = results.values.flatMap { $0.removedLines.filter { $0.reason == .pageNumber } }
         if !pageNumberRemovals.isEmpty {
@@ -317,9 +352,16 @@ enum DenoiseService {
         guard !page.blocks.isEmpty, !removals.isEmpty else { return }
         let repeatedKeys = Set(removals.filter { $0.reason == .repeatedEdgeText }.map(\.normalizedKey))
         let pageNumberTexts = Set(removals.filter { $0.reason == .pageNumber }.map(\.text))
+        let watermarkKeys = Set(removals.filter { $0.reason == .watermark }.map(\.normalizedKey))
         for index in page.blocks.indices {
             let text = page.blocks[index].text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !text.isEmpty, blockIsEdge(page.blocks[index]) else { continue }
+            guard !text.isEmpty else { continue }
+            // Watermark stamps can sit anywhere; edge noise only at the edges.
+            if watermarkKeys.contains(normalizedKey(for: text)), isWatermarkText(text) {
+                page.blocks[index].text = ""
+                continue
+            }
+            guard blockIsEdge(page.blocks[index]) else { continue }
             if repeatedKeys.contains(normalizedKey(for: text)) || pageNumberTexts.contains(text) {
                 page.blocks[index].text = ""
             }
@@ -384,9 +426,21 @@ enum DenoiseService {
         return key.unicodeScalars.contains { CharacterSet.letters.contains($0) }
     }
 
+    /// Month and weekday names (English + French, with common abbreviations) fold to
+    /// "#" like digits do, so date-stamped footers ("Printed 12 May 2024" vs
+    /// "Printed 13 June 2024") share one normalized key and recur like any header.
+    private static let dateWordsPattern =
+        "\\b(january|february|march|april|may|june|july|august|september|october|november|december|"
+        + "jan|feb|mar|apr|jun|jul|aug|sept|sep|oct|nov|dec|"
+        + "monday|tuesday|wednesday|thursday|friday|saturday|sunday|"
+        + "janvier|fevrier|mars|avril|mai|juin|juillet|aout|septembre|octobre|novembre|decembre|"
+        + "lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche)\\b"
+
     private static func normalizedKey(for text: String) -> String {
         let folded = text
             .folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
+            .lowercased()
+            .replacingOccurrences(of: dateWordsPattern, with: "#", options: .regularExpression)
             .replacingOccurrences(of: "\\d+", with: "#", options: .regularExpression)
             .replacingOccurrences(of: "#+", with: "#", options: .regularExpression)
 
@@ -443,6 +497,29 @@ enum DenoiseService {
         guard !stripped.isEmpty, stripped.count <= 10 else { return false }
         let roman = "^(?=[mdclxvi])m{0,3}(cm|cd|d?c{0,3})(xc|xl|l?x{0,3})(ix|iv|v?i{0,3})$"
         return stripped.range(of: roman, options: [.regularExpression, .caseInsensitive]) != nil
+    }
+
+    /// Whole-line watermark/stamp phrases (English + French). Strict whole-line
+    /// matching after stripping decoration — "the copy machine" is body text,
+    /// "*** COPY ***" is a stamp. Used only when the stamp recurs across pages
+    /// (or on 1-page docs).
+    private static let watermarkPhrases: Set<String> = [
+        "confidential", "strictly confidential", "draft", "copy", "certified copy",
+        "true copy", "specimen", "sample", "void", "duplicate", "duplicata", "copie",
+        "confidentiel", "brouillon", "do not copy", "not for distribution",
+        "internal use only", "for internal use only", "uncontrolled copy",
+        "uncontrolled when printed",
+    ]
+
+    private static func isWatermarkText(_ trimmed: String) -> Bool {
+        guard !trimmed.isEmpty, trimmed.count <= 40 else { return false }
+        let stripped = trimmed.trimmingCharacters(in: CharacterSet(charactersIn: "-–—•·*#_~ \t()[]{}"))
+        guard !stripped.isEmpty else { return false }
+        let folded = stripped
+            .folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
+            .lowercased()
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+        return watermarkPhrases.contains(folded)
     }
 
     private static func blockIsEdge(_ block: OCRBlock) -> Bool {

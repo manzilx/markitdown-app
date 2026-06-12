@@ -66,7 +66,7 @@ struct DenoisePreviewSheet: View {
     private func candidateRow(_ candidate: DenoiseService.Candidate) -> some View {
         let isOn = binding(for: candidate.key)
         return HStack(alignment: .center, spacing: Theme.Spacing.md) {
-            Image(systemName: candidate.reason == .pageNumber ? "number.circle.fill" : "text.line.first.and.arrowtriangle.forward")
+            Image(systemName: iconName(for: candidate))
                 .font(.system(size: 17, weight: .medium))
                 .foregroundStyle(isOn.wrappedValue ? Theme.accentBright : Theme.dim)
                 .frame(width: 26)
@@ -103,6 +103,14 @@ struct DenoisePreviewSheet: View {
             stroke: isOn.wrappedValue ? Theme.accent.opacity(0.35) : Theme.hairline
         )
         .animation(Theme.Motion.snappy, value: isOn.wrappedValue)
+    }
+
+    private func iconName(for candidate: DenoiseService.Candidate) -> String {
+        switch candidate.reason {
+        case .pageNumber: return "number.circle.fill"
+        case .watermark: return "seal.fill"
+        case .repeatedEdgeText: return "text.line.first.and.arrowtriangle.forward"
+        }
     }
 
     private func title(for candidate: DenoiseService.Candidate) -> String {

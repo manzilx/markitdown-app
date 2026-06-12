@@ -116,6 +116,50 @@ final class DenoiseServiceTests: XCTestCase {
         XCTAssertEqual(result.plan.removedLineCount, 0, "roman-lookalike words must not be treated as page numbers")
     }
 
+    // MARK: - Date-stamped footers & watermarks
+
+    func testRemovesDateStampedFooterWithVaryingMonths() {
+        // Same footer template but the month NAME varies — digits alone can't cluster these.
+        let months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October"]
+        let texts = (1...10).map { n in
+            page(n, header: nil, footer: "Printed on \(n + 3) \(months[n - 1]) 2024 at 14:0\(n % 10)")
+        }
+        let result = DenoiseService.apply(to: makeDoc(pageTexts: texts))
+        XCTAssertGreaterThanOrEqual(result.plan.removedLineCount, 10)
+        for p in result.document.pages {
+            XCTAssertFalse(p.displayText.contains("Printed on"), "date footer should be gone on page \(p.pageNumber)")
+            XCTAssertTrue(p.displayText.contains("section reviews"), "body should remain on page \(p.pageNumber)")
+        }
+    }
+
+    func testRemovesMidpageWatermarkStamp() {
+        // A stamp OCR'd into the middle of the page is outside the edge zones.
+        let texts = (1...10).map { n -> String in
+            var lines = uniqueBody(page: n, lines: 4)
+            lines.append("*** CONFIDENTIAL ***")
+            lines.append(contentsOf: uniqueBody(page: n + 100, lines: 4))
+            // Body sentence CONTAINING a stamp word must survive (not a whole-line match).
+            lines.append("Please copy the \(Self.pool[n % Self.pool.count]) ledger today.")
+            lines.append(contentsOf: uniqueBody(page: n + 200, lines: 3))
+            return lines.joined(separator: "\n")
+        }
+        let result = DenoiseService.apply(to: makeDoc(pageTexts: texts))
+        XCTAssertGreaterThanOrEqual(result.plan.removedLineCount, 10)
+        XCTAssertTrue(result.plan.candidates.contains { $0.reason == .watermark })
+        for p in result.document.pages {
+            XCTAssertFalse(p.displayText.contains("CONFIDENTIAL"), "stamp should be gone on page \(p.pageNumber)")
+            XCTAssertTrue(p.displayText.contains("Please copy the"), "body mention of a stamp word must stay")
+        }
+    }
+
+    func testLoneWatermarkWordOnOnePageOfManyIsKept() {
+        // "DRAFT" on a single page of a 10-page doc doesn't recur — leave it.
+        var texts = (1...10).map { page($0, header: nil, footer: nil) }
+        texts[4] = "DRAFT\n" + texts[4]
+        let result = DenoiseService.apply(to: makeDoc(pageTexts: texts))
+        XCTAssertEqual(result.plan.removedLineCount, 0)
+    }
+
     // MARK: - Selective apply
 
     func testSelectiveApplyRespectsEnabledKeys() {
