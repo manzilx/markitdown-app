@@ -236,6 +236,58 @@ def test_wrapped_cell_value_merges_into_previous_row():
     assert "End of section marker text" in para_text, "left-edge footer must stay a paragraph"
 
 
+def test_isolated_label_value_pair_keeps_column_separation():
+    # A single label/value row amid prose: no table, but a TAB keeps the columns
+    # apart instead of collapsing them to one space.
+    page = {
+        "page_number": 1,
+        "ocr_text": "x",
+        "blocks": [
+            _block("Some introductory paragraph text here", 0.08, 0.85, 0.70, 0.014),
+            _block("Reference", 0.08, 0.80, 0.15, 0.014),
+            _block("RCS 552 081 317", 0.45, 0.80, 0.25, 0.014),
+            _block("Closing paragraph text goes right here", 0.08, 0.74, 0.70, 0.014),
+        ],
+    }
+    out = build_docx([page])
+    doc = Document(io.BytesIO(out))
+    assert len(doc.tables) == 0
+    pair = next(p for p in doc.paragraphs if "Reference" in p.text)
+    assert "\t" in pair.text, "cells must be separated by a tab stop"
+    assert "RCS 552 081 317" in pair.text
+    assert pair.paragraph_format.tab_stops[0].position is not None
+
+
+def test_section_divider_row_spans_inside_table():
+    # Registry-style: label/value rows interrupted by a wide section header, then
+    # more aligned rows — ONE table with the divider as a spanning row.
+    page = {
+        "page_number": 1,
+        "ocr_text": "x",
+        "blocks": [
+            _block("Company", 0.08, 0.800, 0.18, 0.014),
+            _block("ACME Corp", 0.40, 0.800, 0.30, 0.014),
+            _block("Capital", 0.08, 0.775, 0.15, 0.014),
+            _block("81 941 145,00 Euros", 0.40, 0.775, 0.30, 0.014),
+            _block("MANAGEMENT", 0.08, 0.748, 0.50, 0.015),  # divider
+            _block("Manager", 0.08, 0.722, 0.15, 0.014),
+            _block("POT Nicolas", 0.40, 0.722, 0.25, 0.014),
+            _block("Born", 0.08, 0.697, 0.10, 0.014),
+            _block("12/03/1971", 0.40, 0.697, 0.20, 0.014),
+        ],
+    }
+    out = build_docx([page])
+    doc = Document(io.BytesIO(out))
+    assert len(doc.tables) == 1, "divider must not split the table in two"
+    table = doc.tables[0]
+    assert len(table.rows) == 5
+    table_text = "\n".join(c.text for row in table.rows for c in row.cells)
+    assert "MANAGEMENT" in table_text
+    assert "POT Nicolas" in table_text
+    para_text = "\n".join(p.text for p in doc.paragraphs)
+    assert "MANAGEMENT" not in para_text
+
+
 def test_body_font_sizes_are_quantized_to_one_class():
     # Slightly jittery line heights (±8%) must export at ONE consistent size.
     page = {

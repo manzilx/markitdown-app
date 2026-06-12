@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from docx import Document
-from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_TAB_ALIGNMENT
 from docx.shared import Inches, Pt
 
 from markitdown_api.export.searchable_pdf import _page_text
@@ -73,6 +73,10 @@ class _Row:
     cells: list[_Line] = field(default_factory=list)
     top: float = 0.0
     bottom: float = 0.0
+    # Set during table segmentation: "row" (normal), "cont" (wrapped-cell
+    # continuation merged into the row above), "divider" (single cell spanning
+    # the table, e.g. a section header between label/value runs).
+    tag: str = "row"
 
     @property
     def height(self) -> float:
@@ -276,9 +280,22 @@ def _is_continuation(row: _Row, run: list[_Row]) -> bool:
     return gap <= max(run[-1].height, 0.012) * 1.2
 
 
+def _is_divider(row: _Row, run: list[_Row], nxt: _Row | None) -> bool:
+    """A section header INSIDE a table: a single cell sandwiched between aligned
+    multi-cell rows (registry extracts break label/value runs with these). Only
+    absorbed when an aligned row follows — a trailing single cell is a footer."""
+    if len(row.cells) != 1 or nxt is None or not nxt.is_multi_cell:
+        return False
+    last_real = next(r for r in reversed(run) if r.is_multi_cell)
+    if not _columns_align(last_real, nxt):
+        return False
+    gap = row.top - run[-1].bottom
+    return gap <= max(run[-1].height, 0.012) * 2.5
+
+
 def _segment_rows(rows: list[_Row]) -> list[tuple[str, list[_Row]]]:
     """Split rows into ('table', …) runs (≥2 aligned multi-cell rows, plus any
-    wrapped-cell continuation lines) and ('text', …)."""
+    wrapped-cell continuation lines and spanning divider rows) and ('text', …)."""
     segments: list[tuple[str, list[_Row]]] = []
     i = 0
     while i < len(rows):
@@ -290,6 +307,10 @@ def _segment_rows(rows: list[_Row]) -> list[tuple[str, list[_Row]]]:
                 if rows[j].is_multi_cell and _columns_align(last_real, rows[j]):
                     run.append(rows[j])
                 elif _is_continuation(rows[j], run):
+                    rows[j].tag = "cont"
+                    run.append(rows[j])
+                elif _is_divider(rows[j], run, rows[j + 1] if j + 1 < len(rows) else None):
+                    rows[j].tag = "divider"
                     run.append(rows[j])
                 else:
                     break
@@ -317,9 +338,20 @@ def _render_layout_page(doc: Document, lines: list[_Line]) -> None:
     for kind, seg_rows in _segment_rows(rows):
         if kind == "table":
             _emit_table(doc, seg_rows)
-        else:
-            seg_lines = [cell for row in seg_rows for cell in row.cells]
-            _emit_paragraphs(doc, seg_lines, body_pt, column_width, page_left)
+            continue
+        # Isolated multi-cell rows (a lone label/value pair amid prose) keep their
+        # column separation via tab stops instead of collapsing to a single space.
+        buffered: list[_Line] = []
+        for row in seg_rows:
+            if row.is_multi_cell:
+                if buffered:
+                    _emit_paragraphs(doc, buffered, body_pt, column_width, page_left)
+                    buffered = []
+                _emit_tabbed_row(doc, row, page_left)
+            else:
+                buffered.extend(row.cells)
+        if buffered:
+            _emit_paragraphs(doc, buffered, body_pt, column_width, page_left)
 
 
 def _body_point_size(lines: list[_Line]) -> float:
@@ -345,12 +377,16 @@ def _emit_table(doc: Document, rows: list[_Row]) -> None:
     ncols = len(anchors)
 
     # Build the grid first: each entry is one table row, col -> wrapped lines.
+    # Key -1 marks a divider row that spans every column.
     grid: list[dict[int, list[_Line]]] = []
     for row in rows:
-        if grid and not row.is_multi_cell:
+        if row.tag == "cont" and grid:
             line = row.cells[0]
             col = _nearest_anchor(anchors, line.left)
             grid[-1].setdefault(col, []).append(line)
+            continue
+        if row.tag == "divider":
+            grid.append({-1: list(row.cells)})
             continue
         entry: dict[int, list[_Line]] = {}
         if uniform and row.is_multi_cell:
@@ -372,6 +408,18 @@ def _emit_table(doc: Document, rows: list[_Row]) -> None:
     table.autofit = False
 
     for r, entry in enumerate(grid):
+        if -1 in entry:
+            # Spanning divider row: merge across all columns, bold like a header.
+            cell = table.cell(r, 0)
+            if ncols > 1:
+                cell = cell.merge(table.cell(r, ncols - 1))
+            for k, line in enumerate(entry[-1]):
+                paragraph = cell.paragraphs[0] if k == 0 else cell.add_paragraph()
+                run = paragraph.add_run(line.text)
+                run.font.size = Pt(line.font_pt)
+                run.font.bold = True
+                paragraph.paragraph_format.space_after = Pt(2)
+            continue
         for col, cell_lines in entry.items():
             cell = table.cell(r, col)
             for k, line in enumerate(cell_lines):
@@ -384,6 +432,26 @@ def _emit_table(doc: Document, rows: list[_Row]) -> None:
 
     # Breathing room after the table.
     doc.add_paragraph().paragraph_format.space_after = Pt(4)
+
+
+def _emit_tabbed_row(doc: Document, row: _Row, page_left: float) -> None:
+    """One visual row whose cells stay at their geometric positions via tab stops."""
+    paragraph = doc.add_paragraph()
+    fmt = paragraph.paragraph_format
+    indent = (row.cells[0].left - page_left) * _PAGE_WIDTH_IN
+    if indent > 0.08:
+        fmt.left_indent = Inches(min(indent, 3.0))
+    for cell in row.cells[1:]:
+        fmt.tab_stops.add_tab_stop(
+            Inches(min(max((cell.left - page_left) * _PAGE_WIDTH_IN, 0.1), _PAGE_WIDTH_IN)),
+            WD_TAB_ALIGNMENT.LEFT,
+        )
+    for k, cell in enumerate(row.cells):
+        if k:
+            paragraph.add_run("\t")
+        run = paragraph.add_run(cell.text)
+        run.font.size = Pt(cell.font_pt)
+    fmt.space_after = Pt(6)
 
 
 def _column_anchors(rows: list[_Row]) -> list[float]:
