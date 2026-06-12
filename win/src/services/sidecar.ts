@@ -38,7 +38,7 @@ export async function ensureSidecar(): Promise<void> {
   await invoke("ensure_sidecar");
   if (!(await sidecarHealth())) {
     throw new Error(
-      "Export engine is not running. Open Settings → Restart Sidecar, or reinstall the app."
+      "Export engine is not running. Open Settings > Restart Sidecar, or reinstall the app."
     );
   }
 }
@@ -47,8 +47,16 @@ export async function fetchEngines(): Promise<SidecarEngine[]> {
   const base = await getSidecarUrl();
   const resp = await fetch(`${base}/v1/engines`, { signal: AbortSignal.timeout(5000) });
   if (!resp.ok) throw new Error("Failed to load engines");
-  const data = (await resp.json()) as { engines: SidecarEngine[] };
-  return data.engines;
+  const data = (await resp.json()) as {
+    engines: (Omit<SidecarEngine, "supportsOcr"> & {
+      supportsOcr?: boolean;
+      supports_ocr?: boolean;
+    })[];
+  };
+  return data.engines.map((engine) => ({
+    ...engine,
+    supportsOcr: engine.supportsOcr ?? engine.supports_ocr ?? false,
+  }));
 }
 
 export async function convertViaSidecar(
@@ -178,5 +186,13 @@ export async function exportMarkdown(document: OCRDocument, path: string): Promi
     .sort((a, b) => a.pageNumber - b.pageNumber)
     .map((p: OCRPage) => pageExportText(p))
     .join("\n\n---\n\n");
+  await invoke("write_text_file", { path, text });
+}
+
+export async function exportPlainText(document: OCRDocument, path: string): Promise<void> {
+  const text = [...document.pages]
+    .sort((a, b) => a.pageNumber - b.pageNumber)
+    .map((p: OCRPage) => pageExportText(p))
+    .join("\n\n");
   await invoke("write_text_file", { path, text });
 }

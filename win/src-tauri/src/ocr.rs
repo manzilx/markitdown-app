@@ -2,12 +2,14 @@ use serde::Serialize;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct OcrPageResult {
     pub ocr_text: String,
     pub blocks: Vec<OcrBlockOut>,
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct OcrBlockOut {
     pub id: String,
     pub text: String,
@@ -17,6 +19,7 @@ pub struct OcrBlockOut {
     pub is_redacted: bool,
 }
 
+#[cfg(windows)]
 const LOW_CONFIDENCE: f32 = 0.85;
 
 pub fn ocr_local_png(png_base64: &str) -> Result<OcrPageResult, String> {
@@ -137,11 +140,12 @@ mod windows_ocr {
 
             let width = bitmap.PixelWidth().map_err(|e| e.to_string())? as f64;
             let height = bitmap.PixelHeight().map_err(|e| e.to_string())? as f64;
+            let bbox_height = max_y - min_y;
             let bbox = [
                 min_x / width,
-                min_y / height,
+                1.0 - ((min_y + bbox_height) / height),
                 (max_x - min_x) / width,
-                (max_y - min_y) / height,
+                bbox_height / height,
             ];
             let confidence = if conf_n > 0 {
                 conf_sum / conf_n as f32

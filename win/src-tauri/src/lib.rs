@@ -8,6 +8,7 @@ use settings::{get_default_engine, get_project_root, get_sidecar_url, set_projec
 use sidecar::ensure_sidecar;
 
 #[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 struct DocumentInfo {
     page_count: u32,
     filename: String,
@@ -56,12 +57,33 @@ fn inspect_document(path: String) -> Result<DocumentInfo, String> {
 
 fn pdf_page_count(path: &str) -> Result<u32, String> {
     let data = std::fs::read(path).map_err(|e| e.to_string())?;
-    let needle = b"/Type /Pages";
-    let mut count = data.windows(needle.len()).filter(|w| *w == needle).count();
+    let mut count = 0usize;
+    let needle = b"/Type";
+    for idx in data
+        .windows(needle.len())
+        .enumerate()
+        .filter_map(|(idx, w)| (w == needle).then_some(idx))
+    {
+        let mut cursor = idx + needle.len();
+        while cursor < data.len() && data[cursor].is_ascii_whitespace() {
+            cursor += 1;
+        }
+        if data.get(cursor..cursor + 5) == Some(b"/Page")
+            && data
+                .get(cursor + 5)
+                .map_or(true, |b| !is_pdf_name_char(*b))
+        {
+            count += 1;
+        }
+    }
     if count == 0 {
         count = 1;
     }
     Ok(count.min(10000) as u32)
+}
+
+fn is_pdf_name_char(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.')
 }
 
 #[tauri::command]

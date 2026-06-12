@@ -40,6 +40,7 @@ export interface SidecarEngine {
   description: string;
   badge: string;
   available: boolean;
+  supportsOcr: boolean;
   reason?: string | null;
 }
 

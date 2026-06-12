@@ -6,15 +6,21 @@ import ReviewWorkspace from "./components/ReviewWorkspace";
 import SettingsModal from "./components/SettingsModal";
 import WelcomeView from "./components/WelcomeView";
 import { loadJob, listRecents, saveJob, type RecentJob } from "./services/jobStore";
+import { pdfPageCount, sourceKind } from "./services/rendering";
 
 export default function App() {
   const [document, setDocument] = useState<OCRDocument | null>(null);
   const [recents, setRecents] = useState<RecentJob[]>([]);
   const [engine, setEngine] = useState("windows_ocr");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const refreshRecents = useCallback(async () => {
-    setRecents(await listRecents());
+    try {
+      setRecents(await listRecents());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load recent documents");
+    }
   }, []);
 
   useEffect(() => {
@@ -22,31 +28,55 @@ export default function App() {
     void invoke<string>("get_default_engine").then(setEngine).catch(() => {});
   }, [refreshRecents]);
 
-  const persist = useCallback(async (doc: OCRDocument) => {
-    setDocument(doc);
-    await saveJob(doc);
-    await refreshRecents();
-  }, [refreshRecents]);
+  const persist = useCallback(
+    async (doc: OCRDocument) => {
+      setDocument(doc);
+      try {
+        await saveJob(doc);
+        await refreshRecents();
+        setError(null);
+      } catch (e) {
+        setError(e instanceof Error ? `Save failed: ${e.message}` : "Save failed");
+        throw e;
+      }
+    },
+    [refreshRecents]
+  );
 
   const openPath = async (path: string) => {
-    const info = await invoke<{ pageCount: number; filename: string }>("inspect_document", {
-      path,
-    });
-    const doc: OCRDocument = {
-      id: uuidv4(),
-      filename: info.filename,
-      sourcePath: path,
-      createdAt: new Date().toISOString(),
-      pages: [],
-      engine,
-      totalPageCount: info.pageCount,
-    };
-    await persist(doc);
+    try {
+      const info = await invoke<{ pageCount: number; filename: string }>("inspect_document", {
+        path,
+      });
+      const totalPageCount = sourceKind(path) === "pdf" ? await pdfPageCount(path) : info.pageCount;
+      const doc: OCRDocument = {
+        id: uuidv4(),
+        filename: info.filename,
+        sourcePath: path,
+        createdAt: new Date().toISOString(),
+        pages: [],
+        engine,
+        totalPageCount,
+      };
+      await persist(doc);
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to open document");
+    }
   };
 
   const openRecent = async (id: string) => {
-    const job = await loadJob(id);
-    if (job) setDocument(job);
+    try {
+      const job = await loadJob(id);
+      if (job) {
+        setDocument(job);
+        setError(null);
+      } else {
+        setError("Recent document could not be found.");
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to open recent document");
+    }
   };
 
   if (document) {
@@ -59,6 +89,7 @@ export default function App() {
           onClose={() => setDocument(null)}
           onOpenSettings={() => setSettingsOpen(true)}
         />
+        {error && <div className="app-error">{error}</div>}
         <SettingsModal
           open={settingsOpen}
           engine={engine}
@@ -71,7 +102,12 @@ export default function App() {
 
   return (
     <>
-      <WelcomeView recents={recents} onOpenPath={openPath} onOpenRecent={openRecent} />
+      <WelcomeView
+        recents={recents}
+        error={error}
+        onOpenPath={openPath}
+        onOpenRecent={openRecent}
+      />
       <SettingsModal
         open={settingsOpen}
         engine={engine}
