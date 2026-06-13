@@ -288,6 +288,72 @@ def test_section_divider_row_spans_inside_table():
     assert "MANAGEMENT" not in para_text
 
 
+def _list_page(item_texts, left=0.10):
+    """A page whose body is a vertical stack of list lines."""
+    blocks = []
+    y = 0.85
+    for text in item_texts:
+        blocks.append(_block(text, left, y, 0.60, 0.014))
+        y -= 0.025
+    return {"page_number": 1, "ocr_text": "\n".join(item_texts), "blocks": blocks}
+
+
+def test_bulleted_list_items_stay_separate_with_hanging_indent():
+    out = build_docx([_list_page(["• First point here", "• Second point here", "• Third point here"])])
+    doc = Document(io.BytesIO(out))
+    assert len(doc.tables) == 0
+    items = [p for p in doc.paragraphs if "point here" in p.text]
+    assert len(items) == 3, "each bullet must be its own paragraph, not merged"
+    for p in items:
+        assert p.text.startswith("•"), "source bullet glyph preserved"
+        assert p.paragraph_format.first_line_indent is not None
+        assert p.paragraph_format.first_line_indent < 0, "hanging indent"
+
+
+def test_numbered_list_preserves_source_numbers():
+    out = build_docx([_list_page(["1. Alpha section", "2. Bravo section", "3. Charlie section"])])
+    doc = Document(io.BytesIO(out))
+    items = [p for p in doc.paragraphs if "section" in p.text]
+    assert len(items) == 3
+    assert "1." in items[0].text and "Alpha" in items[0].text
+    assert "2." in items[1].text
+    assert "3." in items[2].text
+
+
+def test_wrapped_bullet_line_merges_into_its_item():
+    page = {
+        "page_number": 1,
+        "ocr_text": "x",
+        "blocks": [
+            _block("• A bullet whose text runs", 0.10, 0.80, 0.55, 0.014),
+            _block("onto a second wrapped line", 0.13, 0.778, 0.50, 0.014),  # indented past bullet
+            _block("• Another distinct bullet", 0.10, 0.74, 0.55, 0.014),
+        ],
+    }
+    out = build_docx([page])
+    doc = Document(io.BytesIO(out))
+    merged = next(p for p in doc.paragraphs if "A bullet whose text runs" in p.text)
+    assert "onto a second wrapped line" in merged.text
+    assert sum(1 for p in doc.paragraphs if "bullet" in p.text.lower()) == 2
+
+
+def test_lone_dash_line_is_not_treated_as_a_list():
+    # A single dash-led line amid prose must NOT become a hanging-indent list item.
+    page = {
+        "page_number": 1,
+        "ocr_text": "x",
+        "blocks": [
+            _block("This is an ordinary paragraph of text.", 0.10, 0.80, 0.70, 0.014),
+            _block("- a single dash line not a list", 0.10, 0.775, 0.60, 0.014),
+            _block("And more ordinary paragraph text.", 0.10, 0.75, 0.70, 0.014),
+        ],
+    }
+    out = build_docx([page])
+    doc = Document(io.BytesIO(out))
+    dash = next(p for p in doc.paragraphs if "single dash line" in p.text)
+    assert dash.paragraph_format.first_line_indent is None or dash.paragraph_format.first_line_indent >= 0
+
+
 def test_body_font_sizes_are_quantized_to_one_class():
     # Slightly jittery line heights (±8%) must export at ONE consistent size.
     page = {

@@ -18,6 +18,7 @@ Two modes per page:
 from __future__ import annotations
 
 import io
+import re
 import statistics
 from dataclasses import dataclass, field
 from typing import Any
@@ -43,6 +44,14 @@ _FONT_FACTOR = 0.85
 _MIN_CELL_GAP = 0.02
 # Left edges within this distance are treated as the same column.
 _COLUMN_TOLERANCE = 0.06
+
+# Leading list markers, kept verbatim in the export so numbering/bullets match the
+# source exactly (Word auto-numbering would renumber and lose the original values).
+_BULLET_CHARS = "•◦‣·▪◆●○*–—-"
+_BULLET_RE = re.compile(rf"^\s*([{re.escape(_BULLET_CHARS)}])\s+(\S.*)$")
+_NUMBER_RE = re.compile(
+    r"^\s*(\(?(?:\d{1,3}|[a-zA-Z]|(?:i{1,3}|iv|v|vi{0,3}|ix|x|xi{0,3}))[.)])\s+(\S.*)$"
+)
 
 
 @dataclass
@@ -467,6 +476,91 @@ def _nearest_anchor(anchors: list[float], left: float) -> int:
     return min(range(len(anchors)), key=lambda i: abs(anchors[i] - left))
 
 
+def _list_marker(text: str) -> tuple[str, str] | None:
+    """If the line begins with a bullet glyph or an ordinal (1. / 2) / a. / (iv)),
+    return (marker, body) with the marker preserved verbatim; else None."""
+    m = _BULLET_RE.match(text)
+    if m:
+        return m.group(1), m.group(2).strip()
+    m = _NUMBER_RE.match(text)
+    if m:
+        return m.group(1).strip(), m.group(2).strip()
+    return None
+
+
+def _split_list_segments(lines: list[_Line]) -> list[tuple[str, list[_Line]]]:
+    """Partition reading-order lines into ('list', …) and ('prose', …) runs. A list
+    run needs >=2 marker lines, so a lone "1. Introduction" heading or a stray dash
+    stays prose. Lines with no marker that sit indented just below an item and close
+    to it are absorbed as wrapped continuations of that item."""
+    segments: list[tuple[str, list[_Line]]] = []
+    i = 0
+    n = len(lines)
+    while i < n:
+        if _list_marker(lines[i].text) is not None:
+            item_left = lines[i].left
+            run = [lines[i]]
+            markers = 1
+            j = i + 1
+            while j < n:
+                nxt = lines[j]
+                if _list_marker(nxt.text) is not None:
+                    run.append(nxt)
+                    markers += 1
+                    j += 1
+                    continue
+                gap = nxt.top - lines[j - 1].bottom
+                if gap <= max(lines[j - 1].height, 0.012) * 1.6 and nxt.left > item_left + 0.015:
+                    run.append(nxt)  # wrapped continuation, indented past the marker
+                    j += 1
+                    continue
+                break
+            if markers >= 2:
+                segments.append(("list", run))
+                i = j
+                continue
+        if segments and segments[-1][0] == "prose":
+            segments[-1][1].append(lines[i])
+        else:
+            segments.append(("prose", [lines[i]]))
+        i += 1
+    return segments
+
+
+def _emit_list(doc: Document, lines: list[_Line], page_left: float) -> None:
+    items: list[list[_Line]] = []
+    for line in lines:
+        if _list_marker(line.text) is not None or not items:
+            items.append([line])
+        else:
+            items[-1].append(line)
+    for item_lines in items:
+        _emit_list_item(doc, item_lines, page_left)
+
+
+def _emit_list_item(doc: Document, item_lines: list[_Line], page_left: float) -> None:
+    """One list item as a hanging-indent paragraph: source marker, tab, body text
+    (wrapped lines folded in). The marker stays at the item's left edge; the body
+    and any wrap align past it."""
+    marker_body = _list_marker(item_lines[0].text)
+    marker, first = marker_body if marker_body else ("", item_lines[0].text)
+    body = " ".join([first, *(l.text for l in item_lines[1:])]).strip()
+
+    sizes = [l.font_pt for l in item_lines]
+    font_pt = max(set(sizes), key=sizes.count)
+
+    paragraph = doc.add_paragraph()
+    fmt = paragraph.paragraph_format
+    base = min(max((item_lines[0].left - page_left) * _PAGE_WIDTH_IN, 0.0), 3.0)
+    hang = 0.25
+    fmt.left_indent = Inches(base + hang)
+    fmt.first_line_indent = Inches(-hang)
+    fmt.tab_stops.add_tab_stop(Inches(base + hang), WD_TAB_ALIGNMENT.LEFT)
+    run = paragraph.add_run(f"{marker}\t{body}")
+    run.font.size = Pt(font_pt)
+    fmt.space_after = Pt(3)
+
+
 def _emit_paragraphs(
     doc: Document,
     lines: list[_Line],
@@ -476,6 +570,20 @@ def _emit_paragraphs(
 ) -> None:
     if not lines:
         return
+    for kind, seg in _split_list_segments(lines):
+        if kind == "list":
+            _emit_list(doc, seg, page_left)
+        else:
+            _emit_prose(doc, seg, body_pt, column_width, page_left)
+
+
+def _emit_prose(
+    doc: Document,
+    lines: list[_Line],
+    body_pt: float,
+    column_width: float,
+    page_left: float,
+) -> None:
     for para_lines, gap_after in _group_paragraphs(lines, column_width):
         sizes = [l.font_pt for l in para_lines]
         font_pt = max(set(sizes), key=sizes.count)
