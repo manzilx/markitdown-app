@@ -359,6 +359,46 @@ def test_heading_sizes_map_to_word_heading_styles():
     assert title.runs[0].font.color.rgb == RGBColor(0, 0, 0)
 
 
+def test_body_sized_all_caps_headers_become_headings():
+    # Contract-style: section titles in CAPS at the SAME size as body text.
+    page = {
+        "page_number": 1,
+        "ocr_text": "x",
+        "blocks": [
+            _block("INTRODUCTION", 0.10, 0.86, 0.22, 0.014),
+            _block("This section describes the agreement scope in plain prose.", 0.10, 0.835, 0.72, 0.014),
+            _block("More ordinary body text continues across this line here.", 0.10, 0.815, 0.72, 0.014),
+            _block("TERMS AND CONDITIONS", 0.10, 0.78, 0.34, 0.014),
+            _block("The terms below govern the relationship between the parties.", 0.10, 0.755, 0.72, 0.014),
+        ],
+    }
+    out = build_docx([page])
+    doc = Document(io.BytesIO(out))
+    intro = next(p for p in doc.paragraphs if p.text.strip() == "INTRODUCTION")
+    terms = next(p for p in doc.paragraphs if p.text.strip() == "TERMS AND CONDITIONS")
+    body = next(p for p in doc.paragraphs if "describes the agreement" in p.text)
+    assert intro.style.name.startswith("Heading")
+    assert terms.style.name.startswith("Heading")
+    assert body.style.name == "Normal", "CAPS header must not swallow the following body line"
+
+
+def test_caps_sentence_is_not_a_header():
+    # An all-caps SENTENCE (ends with a period, long) stays body text.
+    page = {
+        "page_number": 1,
+        "ocr_text": "x",
+        "blocks": [
+            _block("Regular opening paragraph of the document body text here.", 0.10, 0.86, 0.72, 0.014),
+            _block("ALL SALES ARE FINAL AND NO REFUNDS WILL BE ISSUED AT ANY TIME.", 0.10, 0.835, 0.74, 0.014),
+            _block("Closing paragraph continues with normal sentence casing here.", 0.10, 0.815, 0.72, 0.014),
+        ],
+    }
+    out = build_docx([page])
+    doc = Document(io.BytesIO(out))
+    shout = next(p for p in doc.paragraphs if "ALL SALES ARE FINAL" in p.text)
+    assert shout.style.name == "Normal", "a CAPS sentence is not a section header"
+
+
 def test_body_font_sizes_are_quantized_to_one_class():
     # Slightly jittery line heights (±8%) must export at ONE consistent size.
     page = {

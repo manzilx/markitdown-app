@@ -576,6 +576,22 @@ def _emit_list_item(doc: Document, item_lines: list[_Line], page_left: float) ->
     fmt.space_after = Pt(3)
 
 
+def _is_caps_text(text: str) -> bool:
+    """A short, mostly-uppercase, non-sentence line — the way many documents (legal,
+    forms) mark a section header WITHOUT enlarging the font. Guards keep it off
+    CAPS sentences, acronym-and-number labels, and long shouting blocks."""
+    text = text.strip()
+    letters = [c for c in text if c.isalpha()]
+    non_space = [c for c in text if not c.isspace()]
+    if len(letters) < 2 or len(text) > 60 or len(text.split()) > 8:
+        return False
+    if len(letters) < 0.5 * max(len(non_space), 1):
+        return False  # mostly digits/symbols (e.g. a reference number)
+    if text[-1] in ".?!":
+        return False  # a sentence, not a heading
+    return sum(1 for c in letters if c.isupper()) / len(letters) >= 0.8
+
+
 def _emit_paragraphs(
     doc: Document,
     lines: list[_Line],
@@ -601,10 +617,16 @@ def _emit_prose(
     column_width: float,
     page_left: float,
 ) -> None:
+    # Caps headers (no larger font) sit one tier below the smallest size heading, or
+    # are the top level when the document has no size-based headings at all.
+    caps_level = 1 if not heading_levels else min(max(heading_levels.values()) + 1, 3)
+
     for para_lines, gap_after in _group_paragraphs(lines, column_width):
         sizes = [l.font_pt for l in para_lines]
         font_pt = max(set(sizes), key=sizes.count)
         level = heading_levels.get(font_pt) if len(para_lines) <= 3 else None
+        if level is None and len(para_lines) == 1 and _is_caps_text(para_lines[0].text):
+            level = caps_level
 
         paragraph = doc.add_paragraph()
         # A real Word heading style gives the export a navigable outline (Navigation
@@ -641,8 +663,10 @@ def _group_paragraphs(
         size_change = cur.font_pt != prev.font_pt
         short_prev = column_width > 0 and prev.width < column_width * 0.55
         align_change = _line_alignment(cur) != _line_alignment(prev)
+        # A caps header stands alone: never let it merge with neighbouring body text.
+        caps_break = _is_caps_text(cur.text) or _is_caps_text(prev.text)
 
-        if gap > body_height * 1.7 or size_change or short_prev or align_change:
+        if gap > body_height * 1.7 or size_change or short_prev or align_change or caps_break:
             groups.append((current, gap > body_height * 2.6))
             current = [cur]
         else:
