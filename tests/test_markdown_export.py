@@ -85,6 +85,25 @@ def test_side_by_side_rows_become_gfm_table_with_numeric_right_align():
     assert "| Travel expenses | 980,50 |" in md
 
 
+def test_table_cell_pipes_are_escaped():
+    # A '|' inside OCR'd cell text must be escaped so it does not split the column.
+    page = {
+        "page_number": 1,
+        "ocr_text": "x",
+        "blocks": [
+            _block("A | B option", 0.08, 0.80, 0.30, 0.014),
+            _block("100,00", 0.66, 0.80, 0.14, 0.014),
+            _block("C or D", 0.08, 0.775, 0.25, 0.014),
+            _block("250,00", 0.70, 0.775, 0.10, 0.014),
+        ],
+    }
+    md = build_markdown([page])
+    table_line = next(l for l in md.splitlines() if "A " in l and "B option" in l)
+    assert "A \\| B option" in table_line
+    # Exactly two data columns => three '|' delimiters (escaped pipe doesn't count).
+    assert table_line.replace("\\|", "").count("|") == 3
+
+
 def test_page_break_rule_between_pages():
     pages = [
         {"page_number": 1, "ocr_text": "x", "blocks": [_block("Page one body text here", 0.1, 0.8, 0.6, 0.014)]},
