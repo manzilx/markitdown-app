@@ -383,6 +383,21 @@ def _heading_levels(lines: list[_Line], body_pt: float) -> dict[float, int]:
     return {size: min(i + 1, 3) for i, size in enumerate(sizes)}
 
 
+_CURRENCY_WORD_RE = re.compile(r"(?i)\s*(euros?|eur|usd|gbp|dollars?|cents?|%)\s*$")
+
+
+def _is_numeric_cell(text: str) -> bool:
+    """A cell whose content is essentially a number — currency, amount, count, date,
+    percentage — after stripping a leading symbol or trailing currency word. Used to
+    right-align genuinely numeric columns the way invoices and financials do."""
+    t = _CURRENCY_WORD_RE.sub("", text.strip()).strip()
+    t = t.lstrip("$€£¥").strip().strip("()")
+    t = t.replace(" ", "").replace(" ", "")
+    if not any(c.isdigit() for c in t):
+        return False
+    return all(c.isdigit() or c in ".,-+/:" for c in t)
+
+
 def _emit_table(doc: Document, rows: list[_Row]) -> None:
     """Emit aligned multi-cell rows as a borderless Word table with geometric widths.
 
@@ -390,6 +405,7 @@ def _emit_table(doc: Document, rows: list[_Row]) -> None:
     column i): this places right-aligned numeric columns correctly even though
     their left edges scatter. Mixed cell counts fall back to left-edge anchors.
     Single-cell continuation rows (wrapped values) merge into the previous row.
+    Columns whose cells are (almost) all numeric are right-aligned like the source.
     """
     real_rows = [r for r in rows if r.is_multi_cell]
     uniform = len({len(r.cells) for r in real_rows}) == 1
@@ -428,6 +444,20 @@ def _emit_table(doc: Document, rows: list[_Row]) -> None:
         for i in range(ncols)
     ]
 
+    # A column is numeric (→ right-aligned) only when nearly all its cells are
+    # numbers: this catches invoice/amount columns while leaving mixed label/value
+    # columns (a company name beside a date and a sum) left-aligned.
+    numeric_cols: set[int] = set()
+    for col in range(ncols):
+        texts = [
+            line.text
+            for entry in grid if -1 not in entry
+            for line in entry.get(col, [])
+            if line.text.strip()
+        ]
+        if len(texts) >= 2 and sum(_is_numeric_cell(t) for t in texts) >= 0.8 * len(texts):
+            numeric_cols.add(col)
+
     table = doc.add_table(rows=len(grid), cols=ncols)
     table.autofit = False
 
@@ -448,6 +478,8 @@ def _emit_table(doc: Document, rows: list[_Row]) -> None:
             cell = table.cell(r, col)
             for k, line in enumerate(cell_lines):
                 paragraph = cell.paragraphs[0] if k == 0 else cell.add_paragraph()
+                if col in numeric_cols:
+                    paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
                 run = paragraph.add_run(line.text)
                 run.font.size = Pt(line.font_pt)
                 paragraph.paragraph_format.space_after = Pt(2)
