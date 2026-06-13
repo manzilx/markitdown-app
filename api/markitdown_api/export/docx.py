@@ -25,7 +25,7 @@ from typing import Any
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_TAB_ALIGNMENT
-from docx.shared import Inches, Pt
+from docx.shared import Inches, Pt, RGBColor
 
 from markitdown_api.export.payload import ExportPayloadError, normalize_export_pages
 from markitdown_api.export.searchable_pdf import _page_text
@@ -344,6 +344,7 @@ def _segment_rows(rows: list[_Row]) -> list[tuple[str, list[_Row]]]:
 
 def _render_layout_page(doc: Document, lines: list[_Line]) -> None:
     body_pt = _body_point_size(lines)
+    heading_levels = _heading_levels(lines, body_pt)
     column_width = max((l.width for l in lines), default=0.0)
     page_left = min(l.left for l in lines)
 
@@ -358,18 +359,28 @@ def _render_layout_page(doc: Document, lines: list[_Line]) -> None:
         for row in seg_rows:
             if row.is_multi_cell:
                 if buffered:
-                    _emit_paragraphs(doc, buffered, body_pt, column_width, page_left)
+                    _emit_paragraphs(doc, buffered, body_pt, heading_levels, column_width, page_left)
                     buffered = []
                 _emit_tabbed_row(doc, row, page_left)
             else:
                 buffered.extend(row.cells)
         if buffered:
-            _emit_paragraphs(doc, buffered, body_pt, column_width, page_left)
+            _emit_paragraphs(doc, buffered, body_pt, heading_levels, column_width, page_left)
 
 
 def _body_point_size(lines: list[_Line]) -> float:
     sizes = [l.font_pt for l in lines]
     return max(set(sizes), key=sizes.count)
+
+
+def _heading_levels(lines: list[_Line], body_pt: float) -> dict[float, int]:
+    """Map each above-body font size to a Word heading level (largest → Heading 1).
+    Only sizes >=1.25x body qualify as headings; tiers past the third all map to 3."""
+    sizes = sorted(
+        {l.font_pt for l in lines if l.font_pt >= body_pt * 1.25},
+        reverse=True,
+    )
+    return {size: min(i + 1, 3) for i, size in enumerate(sizes)}
 
 
 def _emit_table(doc: Document, rows: list[_Row]) -> None:
@@ -569,6 +580,7 @@ def _emit_paragraphs(
     doc: Document,
     lines: list[_Line],
     body_pt: float,
+    heading_levels: dict[float, int],
     column_width: float,
     page_left: float,
 ) -> None:
@@ -578,22 +590,28 @@ def _emit_paragraphs(
         if kind == "list":
             _emit_list(doc, seg, page_left)
         else:
-            _emit_prose(doc, seg, body_pt, column_width, page_left)
+            _emit_prose(doc, seg, body_pt, heading_levels, column_width, page_left)
 
 
 def _emit_prose(
     doc: Document,
     lines: list[_Line],
     body_pt: float,
+    heading_levels: dict[float, int],
     column_width: float,
     page_left: float,
 ) -> None:
     for para_lines, gap_after in _group_paragraphs(lines, column_width):
         sizes = [l.font_pt for l in para_lines]
         font_pt = max(set(sizes), key=sizes.count)
-        is_heading = font_pt >= body_pt * 1.25 and len(para_lines) <= 3
+        level = heading_levels.get(font_pt) if len(para_lines) <= 3 else None
 
         paragraph = doc.add_paragraph()
+        # A real Word heading style gives the export a navigable outline (Navigation
+        # pane / auto TOC). We keep the scanned size, bold, and black colour so the
+        # look matches the source rather than the template's accent-coloured default.
+        if level:
+            paragraph.style = doc.styles[f"Heading {level}"]
         paragraph.alignment = _alignment(para_lines)
 
         if paragraph.alignment == WD_ALIGN_PARAGRAPH.LEFT:
@@ -603,8 +621,9 @@ def _emit_prose(
 
         run = paragraph.add_run(" ".join(l.text for l in para_lines))
         run.font.size = Pt(font_pt)
-        if is_heading:
+        if level:
             run.font.bold = True
+            run.font.color.rgb = RGBColor(0, 0, 0)
 
         paragraph.paragraph_format.space_after = Pt(14 if gap_after else 6)
 

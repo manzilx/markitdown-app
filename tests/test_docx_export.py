@@ -7,6 +7,7 @@ import zipfile
 
 import pytest
 from docx import Document
+from docx.shared import RGBColor
 from fastapi.testclient import TestClient
 
 from markitdown_api.export.docx import DOCXExportError, build_docx
@@ -328,6 +329,34 @@ def test_lone_dash_line_is_not_treated_as_a_list():
     doc = Document(io.BytesIO(out))
     dash = next(p for p in doc.paragraphs if "single dash line" in p.text)
     assert dash.paragraph_format.first_line_indent is None or dash.paragraph_format.first_line_indent >= 0
+
+
+def test_heading_sizes_map_to_word_heading_styles():
+    # Big title → Heading 1, medium subheading → Heading 2, body stays Normal.
+    page = {
+        "page_number": 1,
+        "ocr_text": "x",
+        "blocks": [
+            _block("DOCUMENT TITLE", 0.30, 0.88, 0.40, 0.030),
+            _block("Section One Heading", 0.10, 0.83, 0.32, 0.020),
+            _block("Body line alpha here", 0.10, 0.80, 0.50, 0.012),
+            _block("Body line bravo here", 0.10, 0.78, 0.50, 0.012),
+            _block("Body line charlie here", 0.10, 0.76, 0.50, 0.012),
+            _block("Body line delta here", 0.10, 0.74, 0.50, 0.012),
+        ],
+    }
+    out = build_docx([page])
+    doc = Document(io.BytesIO(out))
+    title = next(p for p in doc.paragraphs if "DOCUMENT TITLE" in p.text)
+    section = next(p for p in doc.paragraphs if "Section One Heading" in p.text)
+    body = next(p for p in doc.paragraphs if "alpha here" in p.text)
+
+    assert title.style.name == "Heading 1"
+    assert section.style.name == "Heading 2"
+    assert body.style.name == "Normal"
+    # Faithful look: heading runs are bold and black, not the template accent colour.
+    assert title.runs[0].font.bold
+    assert title.runs[0].font.color.rgb == RGBColor(0, 0, 0)
 
 
 def test_body_font_sizes_are_quantized_to_one_class():
