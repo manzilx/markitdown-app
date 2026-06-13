@@ -455,6 +455,44 @@ def test_layout_engine_skips_non_finite_and_absurd_geometry():
     assert "Absurd width" not in full
 
 
+def test_grid_table_header_row_is_bold():
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    page = {
+        "page_number": 1,
+        "ocr_text": "x",
+        "blocks": [
+            _block("Item", 0.08, 0.80, 0.10, 0.014),
+            _block("Qty", 0.50, 0.80, 0.06, 0.014),
+            _block("Price", 0.72, 0.80, 0.10, 0.014),
+            _block("Widget", 0.08, 0.775, 0.14, 0.014),
+            _block("3", 0.50, 0.775, 0.03, 0.014),
+            _block("12,00", 0.72, 0.775, 0.10, 0.014),
+            _block("Gadget", 0.08, 0.75, 0.14, 0.014),
+            _block("5", 0.50, 0.75, 0.03, 0.014),
+            _block("8,50", 0.72, 0.75, 0.09, 0.014),
+        ],
+    }
+    out = build_docx([page])
+    doc = Document(io.BytesIO(out))
+    table = doc.tables[0]
+    assert len(table.columns) == 3
+    assert table.cell(0, 0).text == "Item"
+    assert table.cell(0, 0).paragraphs[0].runs[0].font.bold, "header row bold"
+    assert table.cell(0, 2).paragraphs[0].runs[0].font.bold
+    # Data rows are not bold.
+    assert not table.cell(1, 0).paragraphs[0].runs[0].font.bold
+    # Price column (numeric, excluding the text header) is right-aligned.
+    assert table.cell(1, 2).paragraphs[0].alignment == WD_ALIGN_PARAGRAPH.RIGHT
+
+
+def test_two_column_label_value_table_has_no_bold_header():
+    # The >=3-column guard means a label/value table's first row is NOT bolded.
+    out = build_docx([_table_page()])
+    doc = Document(io.BytesIO(out))
+    table = doc.tables[0]
+    assert not table.cell(0, 0).paragraphs[0].runs[0].font.bold
+
+
 def test_body_font_sizes_are_quantized_to_one_class():
     # Slightly jittery line heights (±8%) must export at ONE consistent size.
     page = {
