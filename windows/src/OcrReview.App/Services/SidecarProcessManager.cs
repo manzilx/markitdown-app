@@ -1,0 +1,378 @@
+using System.Diagnostics;
+using System.IO;
+using System.Runtime.InteropServices;
+using OcrReview.Core.Services;
+
+namespace OcrReview.App.Services;
+
+/// <summary>Auto-starts the Python MarkItDown sidecar on Windows for advanced engines and exports.</summary>
+public sealed class SidecarProcessManager
+{
+    private readonly SidecarClient _client;
+    private readonly Func<string> _projectRootGetter;
+    private Process? _process;
+    private bool _attempted;
+
+    /// <summary>Kill-on-close job object: any child assigned to it dies when this
+    /// process exits — including crashes, where no Closing handler ever runs. Without
+    /// it, ocr-sidecar.exe outlives the app and squats on port 8001 forever.</summary>
+    private static readonly IntPtr KillOnCloseJob = CreateKillOnCloseJob();
+
+    private static IntPtr CreateKillOnCloseJob()
+    {
+        try
+        {
+            var job = CreateJobObjectW(IntPtr.Zero, null);
+            if (job == IntPtr.Zero) return IntPtr.Zero;
+            var info = new JOBOBJECT_EXTENDED_LIMIT_INFORMATION
+            {
+                BasicLimitInformation = { LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE },
+            };
+            int length = Marshal.SizeOf<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>();
+            var ptr = Marshal.AllocHGlobal(length);
+            try
+            {
+                Marshal.StructureToPtr(info, ptr, false);
+                // 9 = JobObjectExtendedLimitInformation
+                if (!SetInformationJobObject(job, 9, ptr, (uint)length)) return IntPtr.Zero;
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(ptr);
+            }
+            return job;
+        }
+        catch
+        {
+            return IntPtr.Zero; // best effort — Stop() still covers normal exits
+        }
+    }
+
+    private const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000;
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    private static extern IntPtr CreateJobObjectW(IntPtr attributes, string? name);
+
+    [DllImport("kernel32.dll")]
+    private static extern bool SetInformationJobObject(IntPtr job, int infoClass, IntPtr info, uint length);
+
+    [DllImport("kernel32.dll")]
+    private static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct JOBOBJECT_BASIC_LIMIT_INFORMATION
+    {
+        public long PerProcessUserTimeLimit;
+        public long PerJobUserTimeLimit;
+        public uint LimitFlags;
+        public UIntPtr MinimumWorkingSetSize;
+        public UIntPtr MaximumWorkingSetSize;
+        public uint ActiveProcessLimit;
+        public UIntPtr Affinity;
+        public uint PriorityClass;
+        public uint SchedulingClass;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct IO_COUNTERS
+    {
+        public ulong ReadOperationCount;
+        public ulong WriteOperationCount;
+        public ulong OtherOperationCount;
+        public ulong ReadTransferCount;
+        public ulong WriteTransferCount;
+        public ulong OtherTransferCount;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct JOBOBJECT_EXTENDED_LIMIT_INFORMATION
+    {
+        public JOBOBJECT_BASIC_LIMIT_INFORMATION BasicLimitInformation;
+        public IO_COUNTERS IoInfo;
+        public UIntPtr ProcessMemoryLimit;
+        public UIntPtr JobMemoryLimit;
+        public UIntPtr PeakProcessMemoryUsed;
+        public UIntPtr PeakJobMemoryUsed;
+    }
+
+    public bool IsRunning { get; private set; }
+    public string StatusMessage { get; private set; } = "Sidecar not started";
+
+    /// <summary>Human-readable reason the last start attempt failed (process crashed,
+    /// exe missing, port busy, …) plus the tail of the helper's own output. Surfaced
+    /// in the error dialog so failures are diagnosable instead of opaque.</summary>
+    public string? LastDiagnostic { get; private set; }
+
+    private readonly object _outputGate = new();
+    private string _recentOutput = "";
+
+    private string SidecarLogPath => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "OcrReview", "sidecar.log");
+
+    public SidecarProcessManager(SidecarClient client, Func<string> projectRootGetter)
+    {
+        _client = client;
+        _projectRootGetter = projectRootGetter;
+    }
+
+    public async Task EnsureRunningAsync()
+    {
+        if (await _client.IsAvailableAsync())
+        {
+            IsRunning = true;
+            StatusMessage = $"Sidecar running at {_client.BaseUrl}";
+            return;
+        }
+
+        if (!_attempted)
+        {
+            _attempted = true;
+            Start();
+        }
+
+        // The bundled helper is a ~100 MB PyInstaller bundle: its first run extracts to
+        // %TEMP% and imports heavy libraries, which on a slow disk (and with antivirus
+        // scanning each extracted file) can take well over a minute. Wait patiently —
+        // but bail the instant the process exits, so a hard failure (crash, AV kill,
+        // port busy) is reported immediately instead of after the full ceiling.
+        const int maxWaitSeconds = 90;
+        for (int i = 0; i < maxWaitSeconds * 2; i++)
+        {
+            await Task.Delay(500);
+            if (await _client.IsAvailableAsync())
+            {
+                IsRunning = true;
+                LastDiagnostic = null;
+                StatusMessage = $"Sidecar started at {_client.BaseUrl}";
+                return;
+            }
+            // Process died during startup — no point waiting the rest of the ceiling.
+            if (_process is { HasExited: true } dead)
+            {
+                IsRunning = false;
+                int code = SafeExitCode(dead);
+                LastDiagnostic = $"The helper exited (code {code}) during startup.\n\n{OutputTail()}";
+                StatusMessage = "The Python helper exited during startup. See sidecar.log.";
+                return;
+            }
+        }
+
+        IsRunning = false;
+        LastDiagnostic = _process == null
+            ? FailureToLaunchDiagnostic()
+            : $"The helper started but never became reachable on {_client.BaseUrl} within {maxWaitSeconds}s.\n\n{OutputTail()}";
+        StatusMessage = "Could not start the Python helper automatically.";
+    }
+
+    private static int SafeExitCode(Process p)
+    {
+        try { return p.ExitCode; } catch { return -1; }
+    }
+
+    private string OutputTail()
+    {
+        lock (_outputGate)
+        {
+            if (string.IsNullOrWhiteSpace(_recentOutput)) return "(the helper produced no output — likely blocked before it ran.)";
+            var tail = _recentOutput.Length > 1200 ? _recentOutput[^1200..] : _recentOutput;
+            return "Last helper output:\n" + tail.Trim();
+        }
+    }
+
+    private string FailureToLaunchDiagnostic()
+    {
+        if (ResolveBundledSidecar() == null && ResolveProjectRoot() == null)
+            return "ocr-sidecar.exe was not found next to OcrReview.exe. Re-extract the download and keep both files in the same folder.";
+        return "The helper process could not be launched — antivirus may have blocked or quarantined ocr-sidecar.exe.";
+    }
+
+    public async Task RestartAsync()
+    {
+        Stop();
+        _attempted = false;
+        await EnsureRunningAsync();
+    }
+
+    private void Start()
+    {
+        // Preferred: a bundled ocr-sidecar.exe shipped next to the app — zero setup,
+        // no Python/uv/project needed by the end user.
+        if (ResolveBundledSidecar() is { } sidecarExe)
+        {
+            StartProcess(new ProcessStartInfo
+            {
+                FileName = sidecarExe,
+                Arguments = "--port 8001",
+                WorkingDirectory = Path.GetDirectoryName(sidecarExe) ?? AppContext.BaseDirectory,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            }, "Starting bundled sidecar…");
+            return;
+        }
+
+        // Fallback (developers): run from a checked-out project via uv.
+        var root = ResolveProjectRoot();
+        if (root == null)
+        {
+            StatusMessage = "MarkItDown helper not found next to the app, and no project path is set in Settings.";
+            return;
+        }
+
+        StartProcess(new ProcessStartInfo
+        {
+            FileName = ResolveUv(),
+            Arguments = "run uvicorn markitdown_api.main:app --host 127.0.0.1 --port 8001 --app-dir api",
+            WorkingDirectory = root,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        }, "Starting sidecar…");
+    }
+
+    private void StartProcess(ProcessStartInfo psi, string startingMessage)
+    {
+        // Capture the helper's own stdout/stderr — without this a startup crash
+        // (missing DLL, import error, port-bind failure) is completely invisible.
+        psi.RedirectStandardOutput = true;
+        psi.RedirectStandardError = true;
+        lock (_outputGate) { _recentOutput = ""; }
+        try
+        {
+            var stamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+            AppendOutput($"=== {stamp} launching {psi.FileName} {psi.Arguments} ===");
+        }
+        catch { /* logging is best effort */ }
+
+        try
+        {
+            var process = Process.Start(psi);
+            _process = process;
+            StatusMessage = startingMessage;
+            if (process == null)
+            {
+                LastDiagnostic = FailureToLaunchDiagnostic();
+                return;
+            }
+
+            process.OutputDataReceived += (_, e) => { if (e.Data != null) AppendOutput(e.Data); };
+            process.ErrorDataReceived += (_, e) => { if (e.Data != null) AppendOutput(e.Data); };
+            try
+            {
+                process.BeginOutputReadLine();
+                process.BeginErrorReadLine();
+            }
+            catch { /* streams unavailable on some hosts */ }
+
+            // Tie the child to this process's lifetime — survives even a crash.
+            if (KillOnCloseJob != IntPtr.Zero)
+            {
+                try { AssignProcessToJobObject(KillOnCloseJob, process.Handle); }
+                catch { /* best effort; Stop() covers normal exits */ }
+            }
+
+            // If the sidecar dies mid-session, allow the next EnsureRunningAsync to
+            // relaunch it instead of stalling through the health poll forever.
+            try
+            {
+                process.EnableRaisingEvents = true;
+                process.Exited += (_, _) =>
+                {
+                    if (ReferenceEquals(_process, process))
+                    {
+                        _process = null;
+                        IsRunning = false;
+                        _attempted = false;
+                    }
+                };
+            }
+            catch { /* diagnostics only */ }
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = "Failed to launch sidecar: " + ex.Message;
+        }
+    }
+
+    private void AppendOutput(string line)
+    {
+        lock (_outputGate)
+        {
+            _recentOutput += line + "\n";
+            if (_recentOutput.Length > 8000) _recentOutput = _recentOutput[^8000..];
+        }
+        try
+        {
+            var dir = Path.GetDirectoryName(SidecarLogPath);
+            if (dir != null) Directory.CreateDirectory(dir);
+            File.AppendAllText(SidecarLogPath, line + Environment.NewLine);
+        }
+        catch { /* logging is best effort */ }
+    }
+
+    /// <summary>Find a bundled <c>ocr-sidecar.exe</c>. Checks the app folder (folder
+    /// publish) and the directory the user actually launched (portable single-file,
+    /// whose extraction dir differs from the on-disk exe location), plus a "sidecar"
+    /// subfolder of each.</summary>
+    private static string? ResolveBundledSidecar()
+    {
+        var roots = new List<string> { AppContext.BaseDirectory };
+        try
+        {
+            if (Path.GetDirectoryName(Environment.ProcessPath) is { Length: > 0 } procDir)
+                roots.Add(procDir);
+        }
+        catch { /* ProcessPath can be null in odd hosts */ }
+
+        foreach (var root in roots)
+        {
+            foreach (var relative in new[] { "ocr-sidecar.exe", Path.Combine("sidecar", "ocr-sidecar.exe") })
+            {
+                var path = Path.Combine(root, relative);
+                if (File.Exists(path)) return path;
+            }
+        }
+        return null;
+    }
+
+    public void Stop()
+    {
+        try
+        {
+            if (_process is { HasExited: false }) _process.Kill(entireProcessTree: true);
+        }
+        catch { /* ignore */ }
+        _process = null;
+        IsRunning = false;
+    }
+
+    private string? ResolveProjectRoot()
+    {
+        var configured = _projectRootGetter();
+        if (!string.IsNullOrWhiteSpace(configured) && Directory.Exists(Path.Combine(configured, "api", "markitdown_api")))
+            return configured;
+
+        var candidates = new[]
+        {
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "markitdown-app"),
+            AppContext.BaseDirectory,
+        };
+        foreach (var candidate in candidates)
+            if (Directory.Exists(Path.Combine(candidate, "api", "markitdown_api")))
+                return candidate;
+        return null;
+    }
+
+    private static string ResolveUv()
+    {
+        var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var candidates = new[]
+        {
+            Path.Combine(profile, ".local", "bin", "uv.exe"),
+            Path.Combine(profile, ".cargo", "bin", "uv.exe"),
+            @"C:\Program Files\uv\uv.exe",
+        };
+        foreach (var candidate in candidates)
+            if (File.Exists(candidate)) return candidate;
+        return "uv"; // fall back to PATH
+    }
+}

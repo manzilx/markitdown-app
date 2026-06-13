@@ -1,0 +1,113 @@
+name: Windows app
+
+# Builds the native WPF app into a standalone OcrReview.exe on a Windows runner
+# and uploads it as a downloadable artifact. This is the verified path to the .exe
+# (the app can't be compiled on macOS/Linux — WPF + WinRT are Windows-only targets).
+
+on:
+  push:
+    paths:
+      - 'windows/**'
+      # The bundled ocr-sidecar.exe is built from the Python API + spec, so changes
+      # there must rebuild the Windows artifacts too.
+      - 'api/**'
+      - 'scripts/ocr-sidecar.spec'
+      - '.github/workflows/windows-build.yml'
+  pull_request:
+    paths:
+      - 'windows/**'
+      - 'api/**'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: windows
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore
+        run: dotnet restore OcrReview.sln
+
+      - name: Test (Core)
+        run: dotnet test tests/OcrReview.Core.Tests/OcrReview.Core.Tests.csproj -c Release --no-restore
+
+      # Build the optional Python helper into a standalone ocr-sidecar.exe so Word and
+      # searchable-PDF export work with zero setup on the end user's PC (no Python/uv).
+      - name: Set up Python 3.12 (for the bundled helper)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Build bundled sidecar (ocr-sidecar.exe)
+        working-directory: ${{ github.workspace }}
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip uv
+          uv sync --python 3.12
+          uv pip install pyinstaller
+          uv run pyinstaller scripts/ocr-sidecar.spec --noconfirm --distpath dist-sidecar --workpath .pyinstaller-build
+          if (!(Test-Path dist-sidecar/ocr-sidecar.exe)) { throw "sidecar build failed — ocr-sidecar.exe not found" }
+          "sidecar: {0:N1} MB" -f ((Get-Item dist-sidecar/ocr-sidecar.exe).Length / 1MB)
+
+      # Primary artifact: ONE self-contained OcrReview.exe with everything embedded.
+      # It survives being copied/moved/mailed on its own — there is no folder of DLLs
+      # to lose, and no .NET install is needed.
+      - name: Publish portable single-file exe
+        run: >
+          dotnet publish src/OcrReview.App/OcrReview.App.csproj
+          -c Release -r win-x64 --self-contained true
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:EnableCompressionInSingleFile=true
+          -p:DebugType=None -p:DebugSymbols=false
+          -o publish-single
+
+      # Fallback artifact: self-contained FOLDER publish — zero self-extraction at
+      # launch, the most conservative form for WPF + WinRT. Run OcrReview.exe from
+      # inside the folder.
+      - name: Publish self-contained app folder
+        run: >
+          dotnet publish src/OcrReview.App/OcrReview.App.csproj
+          -c Release -r win-x64 --self-contained true
+          -o publish
+
+      # Drop the helper next to OcrReview.exe in both layouts. The app auto-launches a
+      # sibling ocr-sidecar.exe, so Word + searchable-PDF export work with no setup.
+      - name: Bundle sidecar into both artifacts
+        shell: pwsh
+        run: |
+          Copy-Item ../dist-sidecar/ocr-sidecar.exe publish/ -Force
+          Copy-Item ../dist-sidecar/ocr-sidecar.exe publish-single/ -Force
+
+      - name: Smoke-check artifacts
+        shell: pwsh
+        run: |
+          if (!(Test-Path publish-single/OcrReview.exe)) { throw "single-file exe missing" }
+          if (!(Test-Path publish-single/ocr-sidecar.exe)) { throw "portable sidecar missing" }
+          if (!(Test-Path publish/OcrReview.exe)) { throw "folder exe missing" }
+          if (!(Test-Path publish/ocr-sidecar.exe)) { throw "folder sidecar missing" }
+          "portable exe: {0:N1} MB" -f ((Get-Item publish-single/OcrReview.exe).Length / 1MB)
+
+      # Portable = OcrReview.exe + ocr-sidecar.exe (keep the two together). The .NET app
+      # is still a single self-contained exe; the helper is an optional companion.
+      - name: Upload portable (app + helper)
+        uses: actions/upload-artifact@v7
+        with:
+          name: OcrReview-win-x64-portable
+          path: windows/publish-single
+          if-no-files-found: error
+
+      - name: Upload app folder
+        uses: actions/upload-artifact@v7
+        with:
+          name: OcrReview-win-x64
+          path: windows/publish
+          if-no-files-found: error
