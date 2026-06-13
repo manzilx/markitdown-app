@@ -41,6 +41,20 @@ enum ExportService {
         return writeText(text, to: url, exportName: "Markdown")
     }
 
+    /// Save already-generated Markdown text (e.g. the layout-aware version from the
+    /// sidecar). The save panel runs first, then the provided text is written.
+    @MainActor
+    static func saveMarkdown(_ text: String, suggestedFilename: String, from window: NSWindow?) -> ExportOutcome {
+        let panel = NSSavePanel()
+        panel.title = "Export Markdown"
+        panel.allowedContentTypes = [.plainText]
+        panel.nameFieldStringValue = suggestedFilename
+        panel.canCreateDirectories = true
+
+        guard panel.runModal() == .OK, let url = panel.url else { return .cancelled }
+        return writeText(text, to: url, exportName: "Markdown")
+    }
+
     @MainActor
     static func exportSearchablePDF(data: Data, suggestedFilename: String, from window: NSWindow?) -> ExportOutcome {
         let panel = NSSavePanel()

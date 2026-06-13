@@ -234,6 +234,84 @@ enum EngineSidecarClient {
         throw SidecarError.serverError("Export failed (HTTP \(http.statusCode)).")
     }
 
+    /// Layout-aware Markdown (headings, lists, GFM tables) from the sidecar. Throws
+    /// `.unreachable` when the sidecar is down so callers can fall back to a local dump.
+    static func exportMarkdown(document: OCRDocument) async throws -> String {
+        guard document.ocrPageCount > 0 else {
+            throw SidecarError.serverError("Run OCR on at least one page before exporting.")
+        }
+
+        guard let endpoint = URL(string: "\(SidecarConfig.baseURL)/v1/export/markdown") else {
+            throw SidecarError.invalidResponse
+        }
+
+        let pagesPayload = try JSONEncoder().encode(document.pagesForExport())
+        let pagesString = String(decoding: pagesPayload, as: UTF8.self)
+        let title = document.filename
+            .replacingOccurrences(of: ".pdf", with: "", options: .caseInsensitive)
+            .replacingOccurrences(of: ".png", with: "", options: .caseInsensitive)
+            .replacingOccurrences(of: ".jpg", with: "", options: .caseInsensitive)
+
+        let boundary = "OCRReview-\(UUID().uuidString)"
+        var body = Data()
+        func append(_ string: String) {
+            if let data = string.data(using: .utf8) { body.append(data) }
+        }
+        append("--\(boundary)\r\n")
+        append("Content-Disposition: form-data; name=\"pages_json\"\r\n\r\n")
+        append(pagesString)
+        append("\r\n")
+        append("--\(boundary)\r\n")
+        append("Content-Disposition: form-data; name=\"title\"\r\n\r\n")
+        append(title)
+        append("\r\n")
+        append("--\(boundary)--\r\n")
+
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "POST"
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        request.httpBody = body
+        request.timeoutInterval = 120
+
+        let (data, response): (Data, URLResponse)
+        do {
+            (data, response) = try await URLSession.shared.data(for: request)
+        } catch {
+            DiagnosticsLogger.shared.log(
+                level: .error,
+                event: "sidecar.export_markdown_unreachable",
+                context: ["error": String(describing: error)]
+            )
+            throw SidecarError.unreachable
+        }
+
+        guard let http = response as? HTTPURLResponse else {
+            throw SidecarError.invalidResponse
+        }
+        if http.statusCode == 200 {
+            DiagnosticsLogger.shared.log(
+                level: .info,
+                event: "sidecar.export_markdown_succeeded",
+                context: ["pages": "\(document.ocrPageCount)"]
+            )
+            return String(decoding: data, as: UTF8.self)
+        }
+        if let detail = try? JSONDecoder().decode(ErrorDetail.self, from: data) {
+            DiagnosticsLogger.shared.log(
+                level: .error,
+                event: "sidecar.export_markdown_failed",
+                context: ["status": "\(http.statusCode)", "detail": detail.detail]
+            )
+            throw SidecarError.serverError(detail.detail)
+        }
+        DiagnosticsLogger.shared.log(
+            level: .error,
+            event: "sidecar.export_markdown_failed",
+            context: ["status": "\(http.statusCode)"]
+        )
+        throw SidecarError.serverError("Export failed (HTTP \(http.statusCode)).")
+    }
+
     private struct ErrorDetail: Decodable {
         let detail: String
     }

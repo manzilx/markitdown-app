@@ -1238,9 +1238,40 @@ final class DocumentViewModel: ObservableObject {
 
     func exportMarkdown() {
         guard let document else { return }
-        handleExportOutcome(
-            ExportService.exportMarkdown(document: document, totalPages: totalPages, from: NSApp.keyWindow)
-        )
+        let stem = document.filename
+            .replacingOccurrences(of: ".pdf", with: "", options: .caseInsensitive)
+            .replacingOccurrences(of: ".png", with: "", options: .caseInsensitive)
+            .replacingOccurrences(of: ".jpg", with: "", options: .caseInsensitive)
+
+        startOperation {
+            self.beginProcessing("Exporting Markdown…", progress: 0, canCancel: true)
+            self.clearError()
+            defer { self.endProcessing() }
+
+            // Prefer the sidecar's layout-aware Markdown (headings, lists, tables);
+            // fall back to the local line dump when the sidecar is unavailable.
+            var text: String?
+            if document.ocrPageCount > 0 {
+                do {
+                    try await EngineSidecarClient.ensureAvailable()
+                    text = try await EngineSidecarClient.exportMarkdown(document: document)
+                } catch is CancellationError {
+                    self.presentWarning("Export cancelled.")
+                    return
+                } catch {
+                    text = nil  // fall back to local generation below
+                }
+            }
+            let markdownText = text ?? ExportService.markdown(for: document, totalPages: self.totalPages)
+            self.progress = 0.8
+            self.handleExportOutcome(
+                ExportService.saveMarkdown(
+                    markdownText,
+                    suggestedFilename: "\(stem).md",
+                    from: NSApp.keyWindow
+                )
+            )
+        }
     }
 
     func exportDOCX() {
