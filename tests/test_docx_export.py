@@ -423,6 +423,39 @@ def test_caps_sentence_is_not_a_header():
     assert shout.style.name == "Normal", "a CAPS sentence is not a section header"
 
 
+def test_numeric_table_column_is_right_aligned():
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    page = {
+        "page_number": 1,
+        "ocr_text": "x",
+        "blocks": [
+            _block("Consulting services", 0.08, 0.80, 0.30, 0.014),
+            _block("1 250,00", 0.66, 0.80, 0.14, 0.014),
+            _block("Travel expenses", 0.08, 0.775, 0.25, 0.014),
+            _block("980,50", 0.70, 0.775, 0.10, 0.014),
+            _block("Total", 0.08, 0.75, 0.10, 0.014),
+            _block("2 230,50", 0.655, 0.75, 0.145, 0.014),
+        ],
+    }
+    out = build_docx([page])
+    doc = Document(io.BytesIO(out))
+    table = doc.tables[0]
+    for r in range(3):
+        assert table.cell(r, 1).paragraphs[0].alignment == WD_ALIGN_PARAGRAPH.RIGHT
+        assert table.cell(r, 0).paragraphs[0].alignment != WD_ALIGN_PARAGRAPH.RIGHT
+
+
+def test_mixed_value_column_is_not_right_aligned():
+    # Registry label/value table: the value column mixes a name, a sum and a date,
+    # so it must stay left-aligned (not forced right like a pure-number column).
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    out = build_docx([_table_page()])
+    doc = Document(io.BytesIO(out))
+    table = doc.tables[0]
+    for r in range(3):
+        assert table.cell(r, 1).paragraphs[0].alignment != WD_ALIGN_PARAGRAPH.RIGHT
+
+
 def test_body_font_sizes_are_quantized_to_one_class():
     # Slightly jittery line heights (±8%) must export at ONE consistent size.
     page = {
