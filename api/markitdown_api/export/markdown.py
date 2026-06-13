@@ -164,6 +164,12 @@ def _md_list(lines: list[_Line]) -> str:
     return "\n".join(rows)
 
 
+def _md_cell(text: str) -> str:
+    """Escape a value for a GFM table cell: a literal '|' is the column delimiter and
+    would otherwise split the cell into extra columns; newlines would break the row."""
+    return text.replace("\\", "\\\\").replace("|", "\\|").replace("\n", " ").replace("\r", " ").strip()
+
+
 def _md_table(rows: list[_Row]) -> str:
     real_rows = [r for r in rows if r.is_multi_cell]
     uniform = len({len(r.cells) for r in real_rows}) == 1
@@ -200,9 +206,9 @@ def _md_table(rows: list[_Row]) -> str:
 
     def render_row(entry: dict[int, list[str]]) -> str:
         if -1 in entry:  # spanning divider: bold text in col 0, GFM has no rowspan
-            cells = ["**" + " ".join(entry[-1]).strip() + "**"] + [""] * (ncols - 1)
+            cells = ["**" + _md_cell(" ".join(entry[-1])) + "**"] + [""] * (ncols - 1)
         else:
-            cells = [" ".join(entry.get(c, [])).strip() for c in range(ncols)]
+            cells = [_md_cell(" ".join(entry.get(c, []))) for c in range(ncols)]
         return "| " + " | ".join(cells) + " |"
 
     sep = "| " + " | ".join("---:" if c in numeric_cols else "---" for c in range(ncols)) + " |"
