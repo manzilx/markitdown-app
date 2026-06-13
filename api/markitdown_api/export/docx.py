@@ -446,14 +446,18 @@ def _emit_table(doc: Document, rows: list[_Row]) -> None:
         for i in range(ncols)
     ]
 
+    header_row = _header_row_index(grid, ncols)
+
     # A column is numeric (→ right-aligned) only when nearly all its cells are
     # numbers: this catches invoice/amount columns while leaving mixed label/value
-    # columns (a company name beside a date and a sum) left-aligned.
+    # columns (a company name beside a date and a sum) left-aligned. The header row,
+    # whose labels are text, is excluded so a labelled amount column still aligns.
     numeric_cols: set[int] = set()
     for col in range(ncols):
         texts = [
             line.text
-            for entry in grid if -1 not in entry
+            for i, entry in enumerate(grid)
+            if -1 not in entry and i != header_row
             for line in entry.get(col, [])
             if line.text.strip()
         ]
@@ -484,6 +488,8 @@ def _emit_table(doc: Document, rows: list[_Row]) -> None:
                     paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
                 run = paragraph.add_run(line.text)
                 run.font.size = Pt(line.font_pt)
+                if r == header_row:
+                    run.font.bold = True
                 paragraph.paragraph_format.space_after = Pt(2)
         for c, width in enumerate(widths):
             table.cell(r, c).width = width
@@ -510,6 +516,29 @@ def _emit_tabbed_row(doc: Document, row: _Row, page_left: float) -> None:
         run = paragraph.add_run(cell.text)
         run.font.size = Pt(cell.font_pt)
     fmt.space_after = Pt(6)
+
+
+def _header_row_index(grid: list[dict[int, list[_Line]]], ncols: int) -> int | None:
+    """Index of a column-header row to bold, or None. Restricted to grids with >=3
+    columns whose first row is all text and a later row carries a number — the
+    classic "Item | Qty | Price" data table. Two-column label/value tables (where
+    the first row is itself data) are deliberately excluded."""
+    if ncols < 3:
+        return None
+    real = [(i, e) for i, e in enumerate(grid) if -1 not in e]
+    if len(real) < 2:
+        return None
+    first_index, first = real[0]
+    first_texts = [line.text for cell in first.values() for line in cell if line.text.strip()]
+    if not first_texts or any(_is_numeric_cell(t) for t in first_texts):
+        return None
+    later_has_number = any(
+        _is_numeric_cell(line.text)
+        for _, entry in real[1:]
+        for cell in entry.values()
+        for line in cell
+    )
+    return first_index if later_has_number else None
 
 
 def _column_anchors(rows: list[_Row]) -> list[float]:
