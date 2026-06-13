@@ -10,6 +10,7 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
 
 from markitdown_api.export.docx import DOCXExportError, build_docx
+from markitdown_api.export.markdown import MarkdownExportError, build_markdown
 from markitdown_api.export.payload import (
     MAX_EXPORT_JSON_BYTES,
     ExportPayloadError,
@@ -113,5 +114,29 @@ async def export_docx(
     return Response(
         content=docx_bytes,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers=attachment_headers(out_name),
+    )
+
+
+@router.post("/markdown")
+async def export_markdown(
+    pages_json: str = Form(...),
+    title: str = Form(""),
+) -> Response:
+    pages = _parse_pages_json(pages_json)
+    doc_title = title.strip() or "OCR Export"
+
+    try:
+        markdown_text = build_markdown(pages, title=doc_title)
+    except MarkdownExportError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Markdown export failed")
+        raise HTTPException(status_code=500, detail="Export failed") from exc
+
+    out_name = f"{doc_title or 'export'}.md"
+    return Response(
+        content=markdown_text.encode("utf-8"),
+        media_type="text/markdown; charset=utf-8",
         headers=attachment_headers(out_name),
     )
