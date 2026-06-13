@@ -18,6 +18,7 @@ Two modes per page:
 from __future__ import annotations
 
 import io
+import math
 import re
 import statistics
 from dataclasses import dataclass, field
@@ -184,7 +185,12 @@ def _layout_lines(page_data: dict[str, Any]) -> list[_Line]:
             x, y, w, h = (float(v) for v in bbox)
         except (TypeError, ValueError):
             continue
-        if w <= 0 or h <= 0:
+        # Reject non-finite (json.loads accepts NaN/Infinity by default, so a garbled
+        # payload can reach here) and absurd dimensions that would corrupt sorting,
+        # height clustering, and table widths. Coordinates are normalized ~[0, 1].
+        if not all(math.isfinite(v) for v in (x, y, w, h)):
+            continue
+        if w <= 0 or h <= 0 or w > 50 or h > 50:
             continue
         lines.append(_Line(text=text, left=x, right=x + w, top=1.0 - (y + h), height=h))
 
