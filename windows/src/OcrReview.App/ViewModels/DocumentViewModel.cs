@@ -262,7 +262,7 @@ public sealed class DocumentViewModel : ObservableObject
         CloseCommand = new RelayCommand(CloseDocument, () => HasDocument);
         RecognizePageCommand = new RelayCommand(() => _ = RecognizePageAsync(CurrentPageIndex, force: true), () => _renderer.HasDocument && !IsProcessing);
         RecognizeAllCommand = new RelayCommand(() => _ = RecognizeAllAsync(), () => _renderer.HasDocument && !IsProcessing);
-        ExportMarkdownCommand = new RelayCommand(ExportMarkdown, () => HasDocument);
+        ExportMarkdownCommand = new RelayCommand(() => _ = ExportMarkdownAsync(), () => HasDocument && !IsProcessing);
         ExportDocxCommand = new RelayCommand(() => _ = ExportDocxAsync(), () => (Document?.OcrPageCount ?? 0) > 0 && !IsProcessing);
         ExportSearchablePdfCommand = new RelayCommand(() => _ = ExportSearchablePdfAsync(), () => (Document?.OcrPageCount ?? 0) > 0 && !IsProcessing);
         ExportTextCommand = new RelayCommand(ExportText, () => HasDocument);
@@ -855,8 +855,32 @@ public sealed class DocumentViewModel : ObservableObject
         return Path.GetFileNameWithoutExtension(name);
     }
 
-    private void ExportMarkdown() =>
-        ExportTextFile($"{FilenameStem()}.md", "Markdown (*.md)|*.md", doc => ExportService.Markdown(doc, TotalPages));
+    private async Task ExportMarkdownAsync()
+    {
+        if (Document is not { } doc) return;
+        var path = AskSave($"{FilenameStem()}.md", "Markdown (*.md)|*.md");
+        if (path == null) return;
+        IsProcessing = true;
+        try
+        {
+            // Prefer the sidecar's layout-aware Markdown (headings, lists, tables);
+            // fall back to the local dump when the sidecar is unavailable.
+            string? text = null;
+            if (doc.OcrPageCount > 0)
+            {
+                try
+                {
+                    await EnsureSidecarAsync();
+                    text = await _sidecar.ExportMarkdownAsync(doc, FilenameStem());
+                }
+                catch { text = null; }
+            }
+            text ??= ExportService.Markdown(doc, TotalPages);
+            await File.WriteAllTextAsync(path, text);
+        }
+        catch (Exception ex) { ErrorMessage = ex.Message; }
+        finally { IsProcessing = false; }
+    }
 
     private void ExportText() =>
         ExportTextFile($"{FilenameStem()}.txt", "Text (*.txt)|*.txt", doc => ExportService.PlainText(doc, TotalPages));
@@ -1145,7 +1169,7 @@ public sealed class DocumentViewModel : ObservableObject
         Add("Settings…", "", "File", null, true, OpenSettings);
         Add("Recognize This Page", "", "OCR", "Ctrl+R", hasSource && !IsProcessing, () => _ = RecognizePageAsync(CurrentPageIndex, true));
         Add("Recognize All Pages…", "", "OCR", null, hasSource && !IsProcessing, () => _ = RecognizeAllAsync());
-        Add("Export Markdown…", "", "Export", "Ctrl+Shift+E", hasDoc, ExportMarkdown);
+        Add("Export Markdown…", "", "Export", "Ctrl+Shift+E", hasDoc, () => _ = ExportMarkdownAsync());
         Add("Export Word…", "", "Export", "Ctrl+Alt+E", hasOcr, () => _ = ExportDocxAsync());
         Add("Export Searchable PDF…", "", "Export", null, hasOcr, () => _ = ExportSearchablePdfAsync());
         Add("Export Plain Text…", "", "Export", null, hasDoc, ExportText);

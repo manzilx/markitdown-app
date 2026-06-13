@@ -103,6 +103,27 @@ public sealed class SidecarClient
         return await resp.Content.ReadAsByteArrayAsync(ct);
     }
 
+    /// <summary>Layout-aware Markdown (headings, lists, GFM tables) from the sidecar.
+    /// Throws <see cref="SidecarException"/> when unreachable so callers can fall back
+    /// to a local dump.</summary>
+    public async Task<string> ExportMarkdownAsync(OcrDocument document, string title, CancellationToken ct = default)
+    {
+        if (document.OcrPageCount == 0)
+            throw new SidecarException("Run OCR on at least one page before exporting.");
+
+        using var form = new MultipartFormDataContent();
+        form.Add(new StringContent(PagesJson(document)), "pages_json");
+        form.Add(new StringContent(title), "title");
+
+        var resp = await _http.PostAsync($"{BaseUrl}/v1/export/markdown", form, ct);
+        if (!resp.IsSuccessStatusCode)
+        {
+            var body = await resp.Content.ReadAsStringAsync(ct);
+            throw new SidecarException(ExtractDetail(body) ?? $"Export failed (HTTP {(int)resp.StatusCode}).");
+        }
+        return await resp.Content.ReadAsStringAsync(ct);
+    }
+
     public static string PagesJson(OcrDocument document)
     {
         var pages = document.Pages
