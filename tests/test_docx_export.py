@@ -456,6 +456,29 @@ def test_mixed_value_column_is_not_right_aligned():
         assert table.cell(r, 1).paragraphs[0].alignment != WD_ALIGN_PARAGRAPH.RIGHT
 
 
+def test_layout_engine_skips_non_finite_and_absurd_geometry():
+    # json.loads accepts NaN/Infinity, so a garbled payload can carry them. Such
+    # blocks must be dropped, not crash the export or corrupt the layout.
+    page = {
+        "page_number": 1,
+        "ocr_text": "x",
+        "blocks": [
+            _block("Valid body line one here", 0.10, 0.80, 0.60, 0.014),
+            _block("Valid body line two here", 0.10, 0.78, 0.60, 0.014),
+            {"text": "NaN width", "bbox_normalized": [0.1, 0.5, float("nan"), 0.02]},
+            {"text": "Inf top", "bbox_normalized": [0.1, float("inf"), 0.3, 0.02]},
+            {"text": "Absurd width", "bbox_normalized": [0.1, 0.4, 9999.0, 0.02]},
+        ],
+    }
+    out = build_docx([page])  # must not raise
+    doc = Document(io.BytesIO(out))
+    full = "\n".join(p.text for p in doc.paragraphs)
+    assert "Valid body line one here" in full
+    assert "NaN width" not in full
+    assert "Inf top" not in full
+    assert "Absurd width" not in full
+
+
 def test_body_font_sizes_are_quantized_to_one_class():
     # Slightly jittery line heights (±8%) must export at ONE consistent size.
     page = {
