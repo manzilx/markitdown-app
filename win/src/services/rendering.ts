@@ -4,7 +4,7 @@ import pdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorker;
 
-export type SourceKind = "pdf" | "image" | "unsupported";
+export type SourceKind = "pdf" | "image" | "document" | "unsupported";
 
 export function sourceKind(path: string): SourceKind {
   const lower = path.toLowerCase();
@@ -14,9 +14,28 @@ export function sourceKind(path: string): SourceKind {
     lower.endsWith(".jpg") ||
     lower.endsWith(".jpeg") ||
     lower.endsWith(".tif") ||
-    lower.endsWith(".tiff")
+    lower.endsWith(".tiff") ||
+    lower.endsWith(".heic")
   ) {
     return "image";
+  }
+  if (
+    lower.endsWith(".docx") ||
+    lower.endsWith(".pptx") ||
+    lower.endsWith(".xlsx") ||
+    lower.endsWith(".xls") ||
+    lower.endsWith(".csv") ||
+    lower.endsWith(".json") ||
+    lower.endsWith(".xml") ||
+    lower.endsWith(".html") ||
+    lower.endsWith(".htm") ||
+    lower.endsWith(".md") ||
+    lower.endsWith(".markdown") ||
+    lower.endsWith(".txt") ||
+    lower.endsWith(".zip") ||
+    lower.endsWith(".epub")
+  ) {
+    return "document";
   }
   return "unsupported";
 }
@@ -90,7 +109,7 @@ async function renderImageToCanvas(
 ): Promise<string> {
   if (!sourceCanUseBrowserImage(sourcePath)) {
     throw new Error(
-      "TIFF preview and local Windows OCR are not available in this build. Use PDF, PNG, or JPEG, or choose an OCR-capable sidecar engine."
+      "Preview and local Windows OCR are not available for this image format. Use PDF, PNG, or JPEG, or choose an OCR-capable sidecar engine."
     );
   }
 

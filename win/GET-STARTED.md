@@ -30,10 +30,13 @@ That’s it.
 | Feature | Needs extra installs? |
 |---------|------------------------|
 | Open PDF / images | No |
+| Open DOCX / PPTX / XLSX / CSV / JSON / HTML / Markdown / text | No |
 | Windows OCR (on-device) | No |
 | Recognize one page or all pages | No |
 | Cancel long OCR runs while keeping completed pages | No |
 | Review & edit text | No |
+| Formatted converted-document preview | No |
+| Converted-document outline navigation | No |
 | Jump-to-issue, heatmap | No |
 | Find / replace | No |
 | Denoise repeated page numbers, headers, and footers | No |
@@ -42,6 +45,7 @@ That’s it.
 | Export Word (.docx) | No — export engine is bundled in the installer |
 | Export searchable PDF | No — export engine is bundled in the installer |
 | Recover saved work from snapshots | No |
+| Persist OCR engine and sidecar settings | No |
 
 The installer includes a bundled **export engine** (`ocr-sidecar.exe`). You never install Python or uv.
 

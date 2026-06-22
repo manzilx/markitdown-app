@@ -4,6 +4,7 @@ import {
   fetchEngines,
   getProjectRoot,
   getSidecarUrl,
+  setDefaultEngine,
   setProjectRoot,
   setSidecarUrl,
   sidecarHealth,
@@ -75,6 +76,7 @@ export default function SettingsModal({ open, engine, onEngineChange, onClose }:
             onClick={async () => {
               await setSidecarUrl(url);
               await setProjectRoot(root);
+              await setDefaultEngine(engine);
               setStatus("Saved");
               setHealthy(await sidecarHealth());
             }}

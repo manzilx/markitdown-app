@@ -24,6 +24,10 @@ export async function setProjectRoot(path: string): Promise<void> {
   await invoke("set_project_root", { path });
 }
 
+export async function setDefaultEngine(engine: string): Promise<void> {
+  await invoke("set_default_engine", { engine });
+}
+
 export async function sidecarHealth(): Promise<boolean> {
   const base = await getSidecarUrl();
   try {
@@ -64,6 +68,15 @@ export async function convertViaSidecar(
   engine: string,
   pageNumber: number
 ): Promise<string> {
+  return convertDocumentToMarkdown(filePath, engine, false, pageNumber);
+}
+
+export async function convertDocumentToMarkdown(
+  filePath: string,
+  engine = "builtin",
+  embedImages = false,
+  pageNumber?: number
+): Promise<string> {
   await ensureSidecar();
   const base = await getSidecarUrl();
   const bytes = await invoke<number[]>("read_file_bytes", { path: filePath });
@@ -72,8 +85,10 @@ export async function convertViaSidecar(
   const form = new FormData();
   form.append("file", blob, name);
   form.append("engine", engine);
-  form.append("embed_images", "false");
-  form.append("page_number", String(pageNumber));
+  form.append("embed_images", embedImages ? "true" : "false");
+  if (pageNumber != null) {
+    form.append("page_number", String(pageNumber));
+  }
 
   const resp = await fetch(`${base}/v1/convert`, {
     method: "POST",

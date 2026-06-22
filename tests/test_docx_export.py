@@ -39,6 +39,35 @@ def test_build_docx_uses_edited_text():
     assert "Page 2" in full_text
 
 
+def test_plain_markdown_exports_structured_docx():
+    pages = [
+        {
+            "page_number": 1,
+            "ocr_text": (
+                "# Quarterly Plan\n\n"
+                "Intro with **bold** and `code`.\n\n"
+                "- Ship DOCX support\n"
+                "- Improve image review\n\n"
+                "| Area | Owner |\n"
+                "| --- | --- |\n"
+                "| OCR | Maya |\n"
+                "| Export | Lee |\n"
+            ),
+            "blocks": [],
+        }
+    ]
+
+    out = build_docx(pages, title="Converted")
+    doc = Document(io.BytesIO(out))
+
+    heading = next(p for p in doc.paragraphs if "Quarterly Plan" in p.text)
+    assert heading.style.name.startswith("Heading")
+    assert any(p.style.name == "List Bullet" and "Ship DOCX support" in p.text for p in doc.paragraphs)
+    assert len(doc.tables) == 1
+    assert doc.tables[0].cell(0, 0).text == "Area"
+    assert doc.tables[0].cell(1, 1).text == "Maya"
+
+
 def test_export_docx_endpoint():
     client = TestClient(app)
     pages_json = (

@@ -4,7 +4,10 @@ mod settings;
 mod sidecar;
 
 use job_store::{delete_job, list_recents, load_job, save_job};
-use settings::{get_default_engine, get_project_root, get_sidecar_url, set_project_root, set_sidecar_url};
+use settings::{
+    get_default_engine, get_project_root, get_sidecar_url, set_default_engine, set_project_root,
+    set_sidecar_url,
+};
 use sidecar::ensure_sidecar;
 
 #[derive(serde::Serialize)]
@@ -44,6 +47,21 @@ fn inspect_document(path: String) -> Result<DocumentInfo, String> {
         || lower.ends_with(".jpeg")
         || lower.ends_with(".tif")
         || lower.ends_with(".tiff")
+        || lower.ends_with(".heic")
+        || lower.ends_with(".docx")
+        || lower.ends_with(".pptx")
+        || lower.ends_with(".xlsx")
+        || lower.ends_with(".xls")
+        || lower.ends_with(".csv")
+        || lower.ends_with(".json")
+        || lower.ends_with(".xml")
+        || lower.ends_with(".html")
+        || lower.ends_with(".htm")
+        || lower.ends_with(".md")
+        || lower.ends_with(".markdown")
+        || lower.ends_with(".txt")
+        || lower.ends_with(".zip")
+        || lower.ends_with(".epub")
     {
         1
     } else {
@@ -111,6 +129,7 @@ pub fn run() {
             get_project_root,
             set_project_root,
             get_default_engine,
+            set_default_engine,
             ensure_sidecar,
             job_list_recents,
             job_load,

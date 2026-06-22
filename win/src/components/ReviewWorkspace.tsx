@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import type { OCRBlock, OCRDocument, OCRPage } from "../models/ocr";
-import { engineLabel } from "../models/ocr";
+import { engineLabel, pageExportText } from "../models/ocr";
 import { denoiseDocument } from "../services/denoise";
 import {
   findMatches,
@@ -17,6 +17,7 @@ import {
   updatePageText,
 } from "../services/documentLogic";
 import {
+  convertDocumentToMarkdown,
   convertViaSidecar,
   exportDocx,
   exportMarkdown,
@@ -26,11 +27,13 @@ import {
   saveBytes,
 } from "../services/sidecar";
 import {
+  readSourceBytes,
   renderSourcePageToPngBase64,
   sourceCanUseBrowserImage,
   sourceKind,
 } from "../services/rendering";
 import FindReplaceBar from "./FindReplaceBar";
+import DocumentPreview from "./DocumentPreview";
 import PDFPageView from "./PDFPageView";
 
 interface Props {
@@ -76,6 +79,20 @@ function pageErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "OCR failed";
 }
 
+function isPlainTextDocument(path: string): boolean {
+  const lower = path.toLowerCase();
+  return (
+    lower.endsWith(".md") ||
+    lower.endsWith(".markdown") ||
+    lower.endsWith(".txt") ||
+    lower.endsWith(".csv") ||
+    lower.endsWith(".json") ||
+    lower.endsWith(".xml") ||
+    lower.endsWith(".html") ||
+    lower.endsWith(".htm")
+  );
+}
+
 export default function ReviewWorkspace({
   ocrDocument,
   engine,
@@ -107,6 +124,8 @@ export default function ReviewWorkspace({
   }, [ocrDocument]);
 
   const pageNumber = pageIndex + 1;
+  const sourceType = sourceKind(ocrDocument.sourcePath);
+  const isConvertedDocument = sourceType === "document";
   const currentPage = ocrDocument.pages.find((p) => p.pageNumber === pageNumber);
   const totalPages = Math.max(ocrDocument.totalPageCount, 1);
   const ocrCount = ocrDocument.pages.length;
@@ -166,10 +185,15 @@ export default function ReviewWorkspace({
       try {
         let newPage: OCRPage;
         const kind = sourceKind(activeDoc.sourcePath);
-        if (kind === "image" && !sourceCanUseBrowserImage(activeDoc.sourcePath)) {
+        if (kind === "document") {
+          const markdown = isPlainTextDocument(activeDoc.sourcePath)
+            ? new TextDecoder().decode(await readSourceBytes(activeDoc.sourcePath))
+            : await convertDocumentToMarkdown(activeDoc.sourcePath, "builtin");
+          newPage = textOnlyPage(markdown, targetPage);
+        } else if (kind === "image" && !sourceCanUseBrowserImage(activeDoc.sourcePath)) {
           if (engine === "windows_ocr") {
             throw new Error(
-              "TIFF local OCR is not available. Choose an OCR-capable sidecar engine in Settings, or convert the file to PDF/PNG/JPEG."
+              "This image format cannot be previewed for local Windows OCR. Choose an OCR-capable sidecar engine in Settings, or convert the file to PDF/PNG/JPEG."
             );
           }
           const markdown = await convertViaSidecar(activeDoc.sourcePath, engine, targetPage);
@@ -289,6 +313,24 @@ export default function ReviewWorkspace({
     setError(null);
   };
 
+  const handleCopyAllText = async () => {
+    const text = [...documentRef.current.pages]
+      .sort((a, b) => a.pageNumber - b.pageNumber)
+      .map(pageExportText)
+      .join("\n\n");
+    if (!text.trim()) {
+      setError("There is no extracted text to copy yet.");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      setNotice("Copied extracted text.");
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Copy failed");
+    }
+  };
+
   const goToIssue = (direction: 1 | -1) => {
     const refs = issueRefs(ocrDocument);
     if (refs.length === 0) return;
@@ -312,7 +354,7 @@ export default function ReviewWorkspace({
 
   const requireOcrForExport = (): boolean => {
     if (ocrDocument.pages.length > 0) return true;
-    setError("Recognize at least one page before exporting.");
+    setError("Convert or recognize at least one page before exporting.");
     return false;
   };
 
@@ -405,7 +447,7 @@ export default function ReviewWorkspace({
           <strong>{ocrDocument.filename}</strong>
           <span className="badge">{engineLabel(ocrDocument.engine || engine)}</span>
           <span className="muted">
-            OCR {ocrCount}/{totalPages} · {reviewSummary(ocrDocument)}
+            {isConvertedDocument ? "Converted" : "OCR"} {ocrCount}/{totalPages} · {reviewSummary(ocrDocument)}
             {failedCount > 0 ? ` · ${failedCount} failed` : ""}
           </span>
         </div>
@@ -430,21 +472,42 @@ export default function ReviewWorkspace({
           <button type="button" onClick={() => setIsFindVisible((v) => !v)}>
             Find
           </button>
-          <button type="button" onClick={() => void ensureCurrentPage()} disabled={isProcessing}>
-            Recognize Page
-          </button>
-          <button type="button" onClick={() => void recognizeAllPages()} disabled={isProcessing}>
-            Recognize All
-          </button>
+          {!isConvertedDocument && (
+            <>
+              <button type="button" onClick={() => void ensureCurrentPage()} disabled={isProcessing}>
+                Recognize Page
+              </button>
+              <button type="button" onClick={() => void recognizeAllPages()} disabled={isProcessing}>
+                Recognize All
+              </button>
+            </>
+          )}
           {isProcessing && (
             <button type="button" className="ghost" onClick={cancelCurrentOperation}>
               Cancel
             </button>
           )}
-          <button type="button" onClick={() => void handleDenoise()} disabled={ocrCount === 0}>
+          {isConvertedDocument && (
+            <button
+              type="button"
+              onClick={() => void recognizePage(1, { force: true })}
+              disabled={isProcessing}
+            >
+              Reconvert
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => void handleDenoise()}
+            disabled={ocrCount === 0 || isConvertedDocument}
+            title={isConvertedDocument ? "Denoise is for repeated OCR page noise" : "Remove repeated OCR page noise"}
+          >
             Denoise
           </button>
           <div className="menu-group">
+            <button type="button" onClick={() => void handleCopyAllText()}>
+              Copy
+            </button>
             <button type="button" onClick={() => void handleExportTxt()}>
               TXT
             </button>
@@ -519,21 +582,25 @@ export default function ReviewWorkspace({
       )}
 
       <div className="split">
-        <PDFPageView
-          sourcePath={ocrDocument.sourcePath}
-          pageNumber={pageNumber}
-          blocks={currentPage?.blocks ?? []}
-          selectedBlockId={selectedBlockId}
-          showHeatmap={showHeatmap}
-          redactedIds={redactedIds}
-          onSelectBlock={setSelectedBlockId}
-          onPageRendered={handlePageRendered}
-        />
+        {isConvertedDocument ? (
+          <DocumentPreview filename={ocrDocument.filename} page={currentPage} />
+        ) : (
+          <PDFPageView
+            sourcePath={ocrDocument.sourcePath}
+            pageNumber={pageNumber}
+            blocks={currentPage?.blocks ?? []}
+            selectedBlockId={selectedBlockId}
+            showHeatmap={showHeatmap}
+            redactedIds={redactedIds}
+            onSelectBlock={setSelectedBlockId}
+            onPageRendered={handlePageRendered}
+          />
+        )}
         <aside className="editor-pane">
           <div className="editor-header">
             <span>{selectedBlockId ? "Selected region" : `Page ${pageNumber} text`}</span>
             <div>
-              {currentPage && (
+              {currentPage && !isConvertedDocument && (
                 <button
                   type="button"
                   className="ghost"
@@ -563,7 +630,11 @@ export default function ReviewWorkspace({
             <div className="placeholder">
               <p>{failedPages[pageNumber] ?? "No OCR for this page yet."}</p>
               <button type="button" onClick={() => void recognizePage(pageNumber, { force: true })}>
-                {failedPages[pageNumber] ? "Retry This Page" : "Recognize This Page"}
+                {failedPages[pageNumber]
+                  ? "Retry This Page"
+                  : isConvertedDocument
+                    ? "Convert This Document"
+                    : "Recognize This Page"}
               </button>
             </div>
           ) : (

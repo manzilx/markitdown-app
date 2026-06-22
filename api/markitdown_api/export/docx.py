@@ -54,6 +54,13 @@ _BULLET_RE = re.compile(rf"^\s*([{re.escape(_BULLET_CHARS)}])\s+(\S.*)$")
 _NUMBER_RE = re.compile(
     r"^\s*(\(?(?:\d{1,3}|[a-zA-Z]|(?:i{1,3}|iv|v|vi{0,3}|ix|x|xi{0,3}))[.)])\s+(\S.*)$"
 )
+_MD_BULLET_RE = re.compile(r"^\s*[-*+]\s+(.+)$")
+_MD_NUMBER_RE = re.compile(r"^\s*\d+[.)]\s+(.+)$")
+_MD_HEADING_RE = re.compile(r"^(#{1,4})\s+(.+)$")
+_MD_TABLE_SEPARATOR_RE = re.compile(
+    r"^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$"
+)
+_MD_INLINE_RE = re.compile(r"(`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*)")
 
 
 @dataclass
@@ -160,12 +167,173 @@ def _build_plain(pages_by_number: list[dict[str, Any]], title: str) -> bytes:
             continue
         if multi_page:
             doc.add_heading(f"Page {page_number}", level=1)
-        for line in text.splitlines():
-            doc.add_paragraph(line)
+        _emit_markdown_text(doc, text)
 
     out = io.BytesIO()
     doc.save(out)
     return out.getvalue()
+
+
+def _emit_markdown_text(doc: Document, text: str) -> None:
+    lines = text.replace("\r\n", "\n").split("\n")
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if not line.strip():
+            i += 1
+            continue
+
+        heading = _MD_HEADING_RE.match(line)
+        if heading:
+            level = min(len(heading.group(1)), 4)
+            paragraph = doc.add_heading(level=level)
+            _add_markdown_runs(paragraph, heading.group(2).strip())
+            i += 1
+            continue
+
+        if line.strip().startswith("```"):
+            code: list[str] = []
+            i += 1
+            while i < len(lines) and not lines[i].strip().startswith("```"):
+                code.append(lines[i])
+                i += 1
+            if i < len(lines):
+                i += 1
+            paragraph = _safe_paragraph(doc, "No Spacing")
+            run = paragraph.add_run("\n".join(code))
+            run.font.name = "Consolas"
+            run.font.size = Pt(9)
+            paragraph.paragraph_format.space_after = Pt(8)
+            continue
+
+        if _is_markdown_table_start(lines, i):
+            i = _emit_markdown_table(doc, lines, i)
+            continue
+
+        quote_match = re.match(r"^\s*>\s+(.+)$", line)
+        if quote_match:
+            paragraph = doc.add_paragraph()
+            paragraph.paragraph_format.left_indent = Inches(0.25)
+            paragraph.paragraph_format.space_after = Pt(6)
+            _add_markdown_runs(paragraph, quote_match.group(1).strip(), italic=True)
+            i += 1
+            continue
+
+        bullet = _MD_BULLET_RE.match(line)
+        if bullet:
+            paragraph = _safe_paragraph(doc, "List Bullet")
+            _add_markdown_runs(paragraph, bullet.group(1).strip())
+            i += 1
+            continue
+
+        number = _MD_NUMBER_RE.match(line)
+        if number:
+            paragraph = _safe_paragraph(doc, "List Number")
+            _add_markdown_runs(paragraph, number.group(1).strip())
+            i += 1
+            continue
+
+        paragraph_lines = [line.strip()]
+        i += 1
+        while i < len(lines) and lines[i].strip() and not _starts_markdown_block(lines, i):
+            paragraph_lines.append(lines[i].strip())
+            i += 1
+        paragraph = doc.add_paragraph()
+        paragraph.paragraph_format.space_after = Pt(8)
+        _add_markdown_runs(paragraph, " ".join(paragraph_lines))
+
+
+def _safe_paragraph(doc: Document, style: str):
+    try:
+        return doc.add_paragraph(style=style)
+    except KeyError:
+        return doc.add_paragraph()
+
+
+def _starts_markdown_block(lines: list[str], index: int) -> bool:
+    line = lines[index]
+    return (
+        bool(_MD_HEADING_RE.match(line))
+        or line.strip().startswith("```")
+        or bool(re.match(r"^\s*>\s+", line))
+        or bool(_MD_BULLET_RE.match(line))
+        or bool(_MD_NUMBER_RE.match(line))
+        or _is_markdown_table_start(lines, index)
+    )
+
+
+def _is_markdown_table_start(lines: list[str], index: int) -> bool:
+    return (
+        index + 1 < len(lines)
+        and "|" in lines[index]
+        and _MD_TABLE_SEPARATOR_RE.match(lines[index + 1]) is not None
+    )
+
+
+def _split_markdown_row(line: str) -> list[str]:
+    return [
+        cell.strip()
+        for cell in line.strip().strip("|").split("|")
+    ]
+
+
+def _emit_markdown_table(doc: Document, lines: list[str], index: int) -> int:
+    header = _split_markdown_row(lines[index])
+    rows: list[list[str]] = []
+    cursor = index + 2
+    while cursor < len(lines) and "|" in lines[cursor] and lines[cursor].strip():
+        row = _split_markdown_row(lines[cursor])
+        if len(row) == len(header):
+            rows.append(row)
+        cursor += 1
+
+    table = doc.add_table(rows=1, cols=len(header))
+    try:
+        table.style = "Table Grid"
+    except KeyError:
+        pass
+    for col, value in enumerate(header):
+        paragraph = table.cell(0, col).paragraphs[0]
+        _add_markdown_runs(paragraph, value, bold=True)
+    for row in rows:
+        cells = table.add_row().cells
+        for col, value in enumerate(row):
+            _add_markdown_runs(cells[col].paragraphs[0], value)
+    doc.add_paragraph().paragraph_format.space_after = Pt(4)
+    return cursor
+
+
+def _add_markdown_runs(paragraph, text: str, *, bold: bool = False, italic: bool = False) -> None:
+    cursor = 0
+    for match in _MD_INLINE_RE.finditer(text):
+        if match.start() > cursor:
+            run = paragraph.add_run(text[cursor:match.start()])
+            run.bold = bold
+            run.italic = italic
+        token = match.group(0)
+        run_text = token
+        run_bold = bold
+        run_italic = italic
+        font_name: str | None = None
+        if token.startswith("`"):
+            run_text = token[1:-1]
+            font_name = "Consolas"
+        elif token.startswith("**"):
+            run_text = token[2:-2]
+            run_bold = True
+        elif token.startswith("*"):
+            run_text = token[1:-1]
+            run_italic = True
+        run = paragraph.add_run(run_text)
+        run.bold = run_bold
+        run.italic = run_italic
+        if font_name:
+            run.font.name = font_name
+        cursor = match.end()
+    if cursor < len(text):
+        run = paragraph.add_run(text[cursor:])
+        run.bold = bold
+        run.italic = italic
 
 
 # ---------------------------------------------------------------- geometry
