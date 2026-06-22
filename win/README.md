@@ -1,6 +1,6 @@
 # OCR Review — Windows
 
-Native Windows desktop app matching the macOS **OCR Review** workflow.
+Native Windows desktop app matching the macOS **OCR Review** workflow, with PDF/image OCR plus converted Office, data, web, Markdown, and text review.
 
 ## For users (no dev tools)
 
@@ -50,6 +50,7 @@ Outputs:
 |-------|---------|
 | Apple Vision OCR | Windows OCR (built-in) |
 | Python sidecar via `uv` (dev) | Bundled `ocr-sidecar.exe` (users) |
+| DOCX conversion through sidecar | DOCX conversion through bundled sidecar |
 
 ---
 

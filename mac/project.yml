@@ -43,7 +43,34 @@ targets:
     settings:
       PRODUCT_BUNDLE_IDENTIFIER: com.ocrreview.app
       PRODUCT_NAME: OCR Review
+      PRODUCT_MODULE_NAME: OCRReview
       GENERATE_INFOPLIST_FILE: false
       INFOPLIST_FILE: OCRReview/Info.plist
       CODE_SIGN_ENTITLEMENTS: OCRReview/OCRReview.entitlements
       DEVELOPMENT_TEAM: $(DEVELOPMENT_TEAM)
+  OCRReviewTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: OCRReviewTests
+    dependencies:
+      - target: OCRReview
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.ocrreview.tests
+        CODE_SIGNING_ALLOWED: NO
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/OCR Review.app/Contents/MacOS/OCR Review"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+schemes:
+  OCRReview:
+    build:
+      targets:
+        OCRReview: all
+        OCRReviewTests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - OCRReviewTests

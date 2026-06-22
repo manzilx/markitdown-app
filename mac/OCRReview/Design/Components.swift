@@ -114,6 +114,81 @@ struct StatusDot: View {
     }
 }
 
+struct NoticeBanner: View {
+    enum Tone {
+        case info
+        case warning
+        case error
+
+        var color: Color {
+            switch self {
+            case .info: Theme.info
+            case .warning: Theme.warning
+            case .error: Theme.danger
+            }
+        }
+
+        var icon: String {
+            switch self {
+            case .info: "info.circle.fill"
+            case .warning: "exclamationmark.triangle.fill"
+            case .error: "xmark.octagon.fill"
+            }
+        }
+    }
+
+    let title: String
+    let message: String
+    var tone: Tone = .error
+    var actionTitle: String?
+    var onAction: (() -> Void)?
+    var onDismiss: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: Theme.Spacing.md) {
+            Image(systemName: tone.icon)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(tone.color)
+                .frame(width: 22, height: 22)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.text)
+                Text(message)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.textSecondary)
+                    .lineLimit(5)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: Theme.Spacing.md)
+
+            if let actionTitle, let onAction {
+                Button(actionTitle, action: onAction)
+                    .buttonStyle(SoftButtonStyle(tint: tone.color))
+                    .controlSize(.small)
+            }
+
+            Button(action: onDismiss) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(Theme.dim)
+                    .frame(width: 24, height: 24)
+            }
+            .buttonStyle(.plain)
+            .help("Dismiss")
+        }
+        .padding(Theme.Spacing.md)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: Theme.Radius.lg, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.Radius.lg, style: .continuous)
+                .strokeBorder(tone.color.opacity(0.35), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.35), radius: 18, y: 8)
+    }
+}
+
 /// A small keyboard-shortcut keycap, e.g. ⌘K.
 struct Keycap: View {
     let label: String

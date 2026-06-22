@@ -57,14 +57,55 @@ enum PDFToolsService {
     }
 
     @MainActor
-    static func savePDF(_ pdf: PDFDocument, suggestedFilename: String, from window: NSWindow?) -> URL? {
+    static func savePDFOutcome(_ pdf: PDFDocument, suggestedFilename: String, from window: NSWindow?) -> ExportOutcome {
         let panel = NSSavePanel()
         panel.title = "Save PDF"
         panel.allowedContentTypes = [.pdf]
         panel.nameFieldStringValue = suggestedFilename
         panel.canCreateDirectories = true
-        guard panel.runModal() == .OK, let url = panel.url else { return nil }
-        guard pdf.write(to: url) else { return nil }
-        return url
+        guard panel.runModal() == .OK, let url = panel.url else { return .cancelled }
+
+        let tempURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("OCRReview-\(UUID().uuidString).pdf")
+        defer { try? FileManager.default.removeItem(at: tempURL) }
+
+        guard pdf.write(to: tempURL) else {
+            let error = AppError(
+                kind: .export,
+                title: "Save failed",
+                userMessage: "OCR Review could not prepare the PDF for saving.",
+                recoveryAction: "Try again or save to another location."
+            )
+            DiagnosticsLogger.shared.log(level: .error, event: "pdf.save_prepare_failed", context: ["url": url.path])
+            return .failed(error)
+        }
+
+        do {
+            let data = try Data(contentsOf: tempURL)
+            return ExportService.writeData(data, to: url, exportName: "PDF")
+        } catch {
+            DiagnosticsLogger.shared.log(
+                level: .error,
+                event: "pdf.save_failed",
+                context: ["url": url.path, "error": String(describing: error)]
+            )
+            return .failed(
+                AppError(
+                    kind: .export,
+                    title: "Save failed",
+                    userMessage: "OCR Review could not save the PDF.",
+                    technicalMessage: String(describing: error),
+                    recoveryAction: "Choose a writable folder and try again."
+                )
+            )
+        }
+    }
+
+    @MainActor
+    static func savePDF(_ pdf: PDFDocument, suggestedFilename: String, from window: NSWindow?) -> URL? {
+        if case .saved(let url) = savePDFOutcome(pdf, suggestedFilename: suggestedFilename, from: window) {
+            return url
+        }
+        return nil
     }
 }

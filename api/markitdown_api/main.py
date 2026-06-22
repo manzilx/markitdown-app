@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -10,6 +12,7 @@ from markitdown_api.config import (
     MAX_UPLOAD_BYTES,
     Engine,
     ENGINE_META,
+    PAGE_IMAGE_OCR_ENGINES,
     engine_availability,
     get_settings,
 )
@@ -20,10 +23,13 @@ from markitdown_api.converter import (
     validate_extension,
 )
 from markitdown_api.export_routes import router as export_router
+from markitdown_api.http_utils import UploadTooLargeError, read_upload_limited
 from markitdown_api.multipart_limits import apply_multipart_limit_patch
 from markitdown_api.pdf_routes import router as pdf_router
 
 apply_multipart_limit_patch()
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="MarkItDown API",
@@ -52,6 +58,7 @@ class EngineInfo(BaseModel):
     description: str
     badge: str
     available: bool
+    supports_ocr: bool
     reason: str | None = None
 
 
@@ -83,6 +90,7 @@ def list_engines() -> EnginesResponse:
             description=ENGINE_META[engine]["description"],
             badge=ENGINE_META[engine]["badge"],
             available=availability[engine][0],
+            supports_ocr=engine in PAGE_IMAGE_OCR_ENGINES,
             reason=availability[engine][1],
         )
         for engine in Engine
@@ -112,12 +120,13 @@ async def convert_document(
     except UnsupportedFileError as exc:
         raise HTTPException(status_code=415, detail=str(exc)) from exc
 
-    data = await file.read()
-    if len(data) > MAX_UPLOAD_BYTES:
+    try:
+        data = await read_upload_limited(file, MAX_UPLOAD_BYTES)
+    except UploadTooLargeError as exc:
         raise HTTPException(
             status_code=413,
             detail=f"File exceeds {MAX_UPLOAD_BYTES // (1024 * 1024)} MB limit",
-        )
+        ) from exc
 
     try:
         markdown = convert_upload(
@@ -134,7 +143,8 @@ async def convert_document(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Conversion failed: {exc}") from exc
+        logger.exception("Conversion failed for %s with engine %s", filename, selected_engine.value)
+        raise HTTPException(status_code=500, detail="Conversion failed") from exc
 
     return ConvertResponse(
         filename=filename,

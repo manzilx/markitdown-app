@@ -30,13 +30,22 @@ That’s it.
 | Feature | Needs extra installs? |
 |---------|------------------------|
 | Open PDF / images | No |
+| Open DOCX / PPTX / XLSX / CSV / JSON / HTML / Markdown / text | No |
 | Windows OCR (on-device) | No |
+| Recognize one page or all pages | No |
+| Cancel long OCR runs while keeping completed pages | No |
 | Review & edit text | No |
+| Formatted converted-document preview | No |
+| Converted-document outline navigation | No |
 | Jump-to-issue, heatmap | No |
 | Find / replace | No |
+| Denoise repeated page numbers, headers, and footers | No |
 | Export Markdown | No |
+| Export text (.txt) | No |
 | Export Word (.docx) | No — export engine is bundled in the installer |
 | Export searchable PDF | No — export engine is bundled in the installer |
+| Recover saved work from snapshots | No |
+| Persist OCR engine and sidecar settings | No |
 
 The installer includes a bundled **export engine** (`ocr-sidecar.exe`). You never install Python or uv.
 
@@ -59,7 +68,9 @@ Windows 11 already has **WebView2**. On Windows 10, the installer includes a sma
 ## For developers only (not required for users)
 
 ```powershell
-cd markitdown-app\win
+cd markitdown-app
+.\scripts\build-windows-sidecar.ps1
+cd win
 npm install
 npm run tauri:build
 ```

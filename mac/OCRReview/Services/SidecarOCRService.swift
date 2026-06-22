@@ -17,6 +17,17 @@ enum SidecarOCRService {
         return OCRPage(pageNumber: pageNumber, ocrText: markdown.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
+    /// Recognize a pre-rendered page image through the sidecar. Render the shared
+    /// on-screen document on the main actor, then hand the CGImage here.
+    static func recognize(cgImage: CGImage, pageNumber: Int, engine: String) async throws -> OCRPage {
+        let rep = NSBitmapImageRep(cgImage: cgImage)
+        guard let png = rep.representation(using: .png, properties: [:]) else {
+            throw OCRError.renderFailed
+        }
+        let markdown = try await convert(data: png, filename: "page-\(pageNumber).png", engine: engine)
+        return OCRPage(pageNumber: pageNumber, ocrText: markdown.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
     static func recognize(imageURL url: URL, pageNumber: Int = 1, engine: String) async throws -> OCRPage {
         let data = try Data(contentsOf: url)
         let markdown = try await convert(data: data, filename: url.lastPathComponent, engine: engine)
@@ -24,6 +35,10 @@ enum SidecarOCRService {
     }
 
     private static func convert(data: Data, filename: String, engine: String) async throws -> String {
+        guard OCRSettings.supportsSidecarPageOCR(engine) else {
+            throw SidecarError.serverError("\(OCRSettings.engineLabel(for: engine)) cannot OCR rendered page images. Choose Apple Vision, Azure Document Intelligence, or LLM OCR in Settings.")
+        }
+
         guard let endpoint = URL(string: "\(SidecarConfig.baseURL)/v1/convert") else {
             throw SidecarError.invalidResponse
         }

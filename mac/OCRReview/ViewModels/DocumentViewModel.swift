@@ -10,7 +10,12 @@ final class DocumentViewModel: ObservableObject {
     @Published var currentPageIndex: Int = 0
     @Published var isProcessing = false
     @Published var progress: Double = 0
+    @Published var processingMessage = ""
+    @Published var appError: AppError?
     @Published var errorMessage: String?
+    @Published private(set) var operationState: OperationState = .idle
+    @Published private(set) var failedPageNumbers: Set<Int> = []
+    @Published private(set) var recognizingPageNumbers: Set<Int> = []
     @Published var pageJumpText = "1"
     @Published var isFindVisible = false
     @Published var findText = ""
@@ -21,14 +26,49 @@ final class DocumentViewModel: ObservableObject {
     @Published private(set) var pdfDocumentModified = false
     @Published var showConfidenceHeatmap = false
     @Published var isCommandPaletteVisible = false
+    @Published var denoisePreview: DenoisePreviewState?
+    @Published private(set) var canUndoDenoise = false
+
+    private var denoiseUndoSnapshot: OCRDocument?
 
     let pdfController = PDFViewController()
 
     private let jobStore = JobStore.shared
+    private var currentOperationTask: Task<Void, Never>?
+    /// Bumped on every page delete/move/append. In-flight OCR results captured before
+    /// the bump are dropped instead of merging at stale page numbers.
+    private var pageStructureVersion = 0
 
     var totalPages: Int {
         if let pdfDocument { return pdfDocument.pageCount }
         return document?.totalPageCount ?? 1
+    }
+
+    var ocrPageCount: Int {
+        document?.ocrPageCount ?? 0
+    }
+
+    var ocrCoverageFraction: Double {
+        guard totalPages > 0 else { return 0 }
+        return min(1, Double(ocrPageCount) / Double(totalPages))
+    }
+
+    var ocrCoverageLabel: String {
+        "\(ocrPageCount)/\(totalPages) pages OCR'd"
+    }
+
+    var remainingOCRPageCount: Int {
+        max(totalPages - ocrPageCount, 0)
+    }
+
+    var exportStatusLabel: String {
+        if ocrPageCount == 0 {
+            return "Run OCR before exporting Word or searchable PDF"
+        }
+        if remainingOCRPageCount > 0 {
+            return "Exports include \(ocrPageCount) of \(totalPages) OCR'd pages"
+        }
+        return "Ready to export"
     }
 
     var engineLabel: String {
@@ -50,6 +90,17 @@ final class DocumentViewModel: ObservableObject {
         (document?.engine ?? OCRSettings.selectedEngine) == "vision"
     }
 
+    var currentOperationCanCancel: Bool {
+        if case .running(_, _, _, let canCancel) = operationState {
+            return canCancel
+        }
+        return false
+    }
+
+    var canDenoiseDocument: Bool {
+        (document?.ocrPageCount ?? 0) > 0 && !isProcessing
+    }
+
     /// Page numbers (1-based) that have been recognized.
     var ocrPageNumbers: Set<Int> {
         Set(document?.pages.map(\.pageNumber) ?? [])
@@ -68,6 +119,10 @@ final class DocumentViewModel: ObservableObject {
 
     var currentPage: OCRPage? {
         document?.page(number: currentPageIndex + 1)
+    }
+
+    var currentPageHasOCR: Bool {
+        currentPage != nil
     }
 
     var currentPageBinding: Binding<String> {
@@ -104,7 +159,7 @@ final class DocumentViewModel: ObservableObject {
 
     var currentPagePlaceholder: String {
         if currentPage != nil { return "" }
-        return "No OCR for this page yet. Click Recognize Text or it will run when you open the page."
+        return "No OCR for this page yet. Use Recognize This Page to extract editable text."
     }
 
     var lowConfidenceBlocks: [OCRBlock] {
@@ -182,11 +237,29 @@ final class DocumentViewModel: ObservableObject {
         Task { await open(url: url) }
     }
 
+    /// Cancel in-flight work and clear per-document bookkeeping before loading a
+    /// different document — otherwise stale tasks merge into the new document, stale
+    /// page sets block its OCR, and a stale denoise plan can be applied to it.
+    private func resetSessionState() {
+        currentOperationTask?.cancel()
+        currentOperationTask = nil
+        pageStructureVersion += 1
+        recognizingPageNumbers = []
+        failedPageNumbers = []
+        denoisePreview = nil
+        denoiseUndoSnapshot = nil
+        canUndoDenoise = false
+        findMatches = []
+        currentFindMatchIndex = 0
+        selectedBlockID = nil
+        ThumbnailCache.shared.clear()
+    }
+
     func open(url: URL) async {
-        errorMessage = nil
-        isProcessing = true
-        progress = 0
-        defer { isProcessing = false }
+        clearError()
+        resetSessionState()
+        beginProcessing("Opening document…", progress: 0)
+        defer { endProcessing() }
 
         do {
             let source = try DocumentLoader.load(from: url)
@@ -221,7 +294,15 @@ final class DocumentViewModel: ObservableObject {
             if let document { jobStore.save(document) }
             prefetchAdjacent(around: currentPageIndex)
         } catch {
-            errorMessage = error.localizedDescription
+            presentError(
+                AppError.wrap(
+                    error,
+                    kind: .open,
+                    title: "Open failed",
+                    fallback: "OCR Review could not open this document.",
+                    recoveryAction: "Check that the file still exists and is a supported PDF or image."
+                )
+            )
             document = nil
             loadedSource = nil
             pdfDocument = nil
@@ -229,7 +310,8 @@ final class DocumentViewModel: ObservableObject {
     }
 
     func openRecent(_ recent: OCRDocument) {
-        errorMessage = nil
+        clearError()
+        resetSessionState()
         do {
             let source = try DocumentLoader.load(from: recent.sourceURL)
             loadedSource = source
@@ -242,8 +324,22 @@ final class DocumentViewModel: ObservableObject {
             document = recent
             currentPageIndex = 0
             syncPageJumpText()
+            // Recognize the first page if it isn't already, and prefetch the next —
+            // otherwise a recent opened to an un-OCR'd page shows blank until you navigate.
+            Task {
+                await ensurePageRecognized(at: currentPageIndex)
+                prefetchAdjacent(around: currentPageIndex)
+            }
         } catch {
-            errorMessage = error.localizedDescription
+            presentError(
+                AppError.wrap(
+                    error,
+                    kind: .open,
+                    title: "Recent document unavailable",
+                    fallback: "OCR Review could not reopen the source document.",
+                    recoveryAction: "Restore the source file or open it from its new location."
+                )
+            )
         }
     }
 
@@ -263,10 +359,14 @@ final class DocumentViewModel: ObservableObject {
         guard OCRSettings.selectedEngine == "vision", loadedSource != nil else { return }
         let next = index + 1
         guard next < totalPages, document?.page(number: next + 1) == nil else { return }
+        // Capture identity NOW: by the time Vision finishes, the user may have opened a
+        // different document or restructured this one — merging then would corrupt it.
+        guard let documentID = document?.id else { return }
+        let structureVersion = pageStructureVersion
         Task { [weak self] in
             guard let self else { return }
             if let page = await self.visionPrefetch(index: next) {
-                self.mergePrefetchedPage(page)
+                self.mergePrefetchedPage(page, documentID: documentID, structureVersion: structureVersion)
             }
         }
     }
@@ -274,8 +374,8 @@ final class DocumentViewModel: ObservableObject {
     private func visionPrefetch(index: Int) async -> OCRPage? {
         switch loadedSource {
         case .pdf:
-            guard let page = pdfDocument?.page(at: index) else { return nil }
-            return try? await VisionOCRService.recognize(pdfPage: page, pageNumber: index + 1)
+            guard let cgImage = renderSharedPageCGImage(at: index) else { return nil }
+            return try? await VisionOCRService.recognize(cgImage: cgImage, pageNumber: index + 1)
         case .image(let url):
             return try? await VisionOCRService.recognize(imageURL: url, pageNumber: index + 1)
         case .none:
@@ -283,13 +383,59 @@ final class DocumentViewModel: ObservableObject {
         }
     }
 
-    private func mergePrefetchedPage(_ page: OCRPage) {
-        guard var doc = document else { return }
+    private func mergePrefetchedPage(_ page: OCRPage, documentID: UUID, structureVersion: Int) {
+        guard var doc = document,
+              doc.id == documentID,
+              pageStructureVersion == structureVersion
+        else { return }
         guard doc.page(number: page.pageNumber) == nil else { return }
         doc.pages.append(page)
         doc.pages.sort { $0.pageNumber < $1.pageNumber }
         document = doc
         jobStore.scheduleSave(doc)
+    }
+
+    /// Merge one recognized page into the document. `coalesceSave` batches the disk
+    /// write (used when pages stream in rapidly from parallel OCR).
+    private func mergeRecognizedPage(_ page: OCRPage, engine: String, coalesceSave: Bool = false) {
+        guard var doc = document else { return }
+        if let existing = doc.pages.firstIndex(where: { $0.pageNumber == page.pageNumber }) {
+            doc.pages[existing] = page
+        } else {
+            doc.pages.append(page)
+        }
+        doc.pages.sort { $0.pageNumber < $1.pageNumber }
+        doc.engine = engine
+        document = doc
+        if coalesceSave {
+            jobStore.scheduleSave(doc)
+        } else {
+            jobStore.save(doc)
+        }
+        if page.pageNumber == currentPageIndex + 1 {
+            selectedBlockID = nil
+        }
+        refreshFindResults()
+    }
+
+    private func validateOCRCapable(_ engine: String) throws {
+        guard engine == "vision" || OCRSettings.supportsSidecarPageOCR(engine) else {
+            throw AppError(
+                kind: .validation,
+                title: "Engine cannot OCR pages",
+                userMessage: "\(OCRSettings.engineLabel(for: engine)) is a conversion-only engine and cannot OCR rendered page images.",
+                recoveryAction: "Choose Apple Vision, Azure Document Intelligence, or LLM OCR in Settings."
+            )
+        }
+    }
+
+    private func startOperation(_ body: @escaping @MainActor () async -> Void) {
+        guard currentOperationTask == nil else { return }
+        currentOperationTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.currentOperationTask = nil }
+            await body()
+        }
     }
 
     func jumpToPageFromField() {
@@ -307,16 +453,21 @@ final class DocumentViewModel: ObservableObject {
     }
 
     func recognizeCurrentPage() {
-        Task { await recognizePage(at: currentPageIndex) }
+        startOperation {
+            await self.recognizePage(at: self.currentPageIndex)
+        }
     }
 
     func recognizeAllPages() {
-        Task {
+        guard currentOperationTask == nil else { return }
+        currentOperationTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.currentOperationTask = nil }
             let total = totalPages
             if total > 50 {
                 let alert = NSAlert()
                 alert.messageText = "Recognize all \(total) pages?"
-                alert.informativeText = "This may take a long time with Apple Vision. Prefer recognizing one page at a time for large documents."
+                alert.informativeText = "Apple Vision recognizes pages in parallel on this Mac, but a document this large can still take a few minutes. You can keep reviewing pages while it runs and cancel at any time."
                 alert.addButton(withTitle: "Recognize All")
                 alert.addButton(withTitle: "Cancel")
                 guard alert.runModal() == .alertFirstButtonReturn else { return }
@@ -325,17 +476,42 @@ final class DocumentViewModel: ObservableObject {
         }
     }
 
+    func cancelCurrentOperation() {
+        currentOperationTask?.cancel()
+        DiagnosticsLogger.shared.log(level: .info, event: "operation.cancel_requested")
+    }
+
+    func retryFailedPage(_ pageNumber: Int) {
+        let index = pageNumber - 1
+        guard index >= 0, index < totalPages else { return }
+        currentPageIndex = index
+        syncPageJumpText()
+        startOperation {
+            await self.recognizePage(at: index, force: true)
+        }
+    }
+
+    /// Render a page of the shared on-screen document to an image **on the main actor**.
+    /// PDFKit is not thread-safe and this document is shared with the PDF view, so its
+    /// pages must never be rendered on a background thread.
+    private func renderSharedPageCGImage(at index: Int, scale: CGFloat = 2.0) -> CGImage? {
+        guard let page = pdfDocument?.page(at: index) else { return nil }
+        return VisionOCRService.renderPage(page, scale: scale)
+    }
+
     /// Recognize one page using the in-memory document (no disk re-parse).
     private func recognizeSinglePage(at index: Int, engine: String) async throws -> OCRPage {
+        try validateOCRCapable(engine)
+        try Task.checkCancellation()
         guard let source = loadedSource else { throw OCRError.openFailed }
         switch source {
         case .pdf:
-            guard let page = pdfDocument?.page(at: index) else { throw OCRError.renderFailed }
+            guard let cgImage = renderSharedPageCGImage(at: index) else { throw OCRError.renderFailed }
             if engine == "vision" {
-                return try await VisionOCRService.recognize(pdfPage: page, pageNumber: index + 1)
+                return try await VisionOCRService.recognize(cgImage: cgImage, pageNumber: index + 1)
             }
             try await EngineSidecarClient.ensureAvailable()
-            return try await SidecarOCRService.recognize(pdfPage: page, pageNumber: index + 1, engine: engine)
+            return try await SidecarOCRService.recognize(cgImage: cgImage, pageNumber: index + 1, engine: engine)
         case .image(let url):
             if engine == "vision" {
                 return try await VisionOCRService.recognize(imageURL: url, pageNumber: index + 1)
@@ -345,87 +521,239 @@ final class DocumentViewModel: ObservableObject {
         }
     }
 
-    private func recognizePage(at index: Int) async {
-        guard var doc = document, loadedSource != nil else { return }
-        if doc.page(number: index + 1) != nil { return }
+    private func recognizePage(at index: Int, force: Bool = false) async {
+        guard let startingDocumentID = document?.id, loadedSource != nil else { return }
+        let pageNumber = index + 1
+        if !force, currentPage(number: pageNumber) != nil, !failedPageNumbers.contains(pageNumber) { return }
+        guard !recognizingPageNumbers.contains(pageNumber) else { return }
+        let structureVersion = pageStructureVersion
 
-        isProcessing = true
-        defer { isProcessing = false }
+        recognizingPageNumbers.insert(pageNumber)
+        failedPageNumbers.remove(pageNumber)
+        beginProcessing("Recognizing page \(pageNumber)…", progress: 0, pageNumber: pageNumber, canCancel: currentOperationTask != nil)
+        defer {
+            // Only clean up our own document's bookkeeping — if the user switched
+            // documents mid-flight, these sets and the processing state belong to the
+            // NEW document's operations now.
+            if document?.id == startingDocumentID {
+                recognizingPageNumbers.remove(pageNumber)
+                endProcessing()
+            }
+        }
 
         do {
             let engine = OCRSettings.selectedEngine
             let page = try await recognizeSinglePage(at: index, engine: engine)
-            if let existing = doc.pages.firstIndex(where: { $0.pageNumber == page.pageNumber }) {
-                doc.pages[existing] = page
-            } else {
-                doc.pages.append(page)
-            }
-            doc.pages.sort { $0.pageNumber < $1.pageNumber }
-            doc.engine = engine
-            document = doc
-            jobStore.save(doc)
-            if page.pageNumber == currentPageIndex + 1 {
-                selectedBlockID = nil
-            }
-            refreshFindResults()
+            try Task.checkCancellation()
+            guard document?.id == startingDocumentID, pageStructureVersion == structureVersion else { return }
+            mergeRecognizedPage(page, engine: engine)
+            progress = 1
+            failedPageNumbers.remove(pageNumber)
+            DiagnosticsLogger.shared.log(
+                level: .info,
+                event: "ocr.page_succeeded",
+                context: ["page": "\(pageNumber)", "engine": engine]
+            )
+        } catch is CancellationError {
+            presentWarning("OCR cancelled. Completed pages were kept.")
         } catch {
-            errorMessage = error.localizedDescription
+            failedPageNumbers.insert(pageNumber)
+            let appError = AppError.wrap(
+                error,
+                kind: .ocr,
+                title: "OCR failed on page \(pageNumber)",
+                fallback: "OCR Review could not recognize page \(pageNumber).",
+                recoveryAction: "Use Retry Failed Page after checking the sidecar or source file."
+            )
+            presentError(appError)
+            DiagnosticsLogger.shared.log(
+                level: .error,
+                event: "ocr.page_failed",
+                context: ["page": "\(pageNumber)", "error": String(describing: error)]
+            )
         }
     }
 
     private func recognizeAllPagesAsync() async {
-        guard let source = loadedSource else { return }
-        isProcessing = true
-        progress = 0
+        guard let startingDocumentID = document?.id, loadedSource != nil else { return }
+        let structureVersion = pageStructureVersion
+        beginProcessing("Recognizing all pages…", progress: 0, canCancel: true)
         defer {
-            isProcessing = false
             progress = 1
+            endProcessing()
         }
 
         do {
             let engine = OCRSettings.selectedEngine
-            let pages: [OCRPage]
-
-            switch source {
-            case .pdf:
-                if engine == "vision" {
-                    let url = try resolvedSourceURL()
-                    let pageCount = totalPages
-                    pages = try await VisionOCRService.recognizeAllPages(
-                        pdfURL: url,
-                        pageCount: pageCount
-                    ) { [weak self] value in
-                        Task { @MainActor in self?.progress = value }
-                    }
-                } else {
-                    try await EngineSidecarClient.ensureAvailable()
-                    var collected: [OCRPage] = []
-                    for index in 0..<totalPages {
-                        let page = try await recognizeSinglePage(at: index, engine: engine)
-                        collected.append(page)
-                        progress = Double(index + 1) / Double(totalPages)
-                    }
-                    pages = collected
-                }
-            case .image(let url):
-                if engine == "vision" {
-                    pages = [try await VisionOCRService.recognize(imageURL: url, pageNumber: 1)]
-                } else {
-                    try await EngineSidecarClient.ensureAvailable()
-                    pages = [try await SidecarOCRService.recognize(imageURL: url, pageNumber: 1, engine: engine)]
-                }
+            try validateOCRCapable(engine)
+            if engine != "vision" {
+                try await EngineSidecarClient.ensureAvailable()
             }
 
-            if var doc = document {
-                doc.pages = pages
-                doc.engine = engine
-                document = doc
-                jobStore.save(doc)
-                refreshFindResults()
+            var successCount = 0
+            var failures: [String] = []
+            let total = totalPages
+
+            // Fast path: Apple Vision on a PDF recognizes pages in parallel. Each worker
+            // opens its own PDFDocument from disk, so the shared on-screen document is
+            // never touched off the main thread.
+            if engine == "vision", case .pdf = loadedSource {
+                try await recognizeAllPagesParallel(engine: engine)
+                return
             }
+
+            for index in 0..<total {
+                try Task.checkCancellation()
+                let pageNumber = index + 1
+                if currentPage(number: pageNumber) != nil, !failedPageNumbers.contains(pageNumber) {
+                    progress = Double(index + 1) / Double(max(total, 1))
+                    continue
+                }
+                if recognizingPageNumbers.contains(pageNumber) {
+                    progress = Double(index + 1) / Double(max(total, 1))
+                    continue
+                }
+
+                recognizingPageNumbers.insert(pageNumber)
+                failedPageNumbers.remove(pageNumber)
+                defer { recognizingPageNumbers.remove(pageNumber) }
+
+                processingMessage = "Recognizing page \(pageNumber) of \(total)…"
+                operationState = .running(
+                    message: processingMessage,
+                    progress: progress,
+                    pageNumber: pageNumber,
+                    canCancel: true
+                )
+                do {
+                    let page = try await recognizeSinglePage(at: index, engine: engine)
+                    try Task.checkCancellation()
+                    guard document?.id == startingDocumentID, pageStructureVersion == structureVersion else {
+                        throw CancellationError()
+                    }
+                    mergeRecognizedPage(page, engine: engine)
+                    successCount += 1
+                    failedPageNumbers.remove(pageNumber)
+                    DiagnosticsLogger.shared.log(
+                        level: .info,
+                        event: "ocr.page_succeeded",
+                        context: ["page": "\(pageNumber)", "engine": engine]
+                    )
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    failures.append("Page \(pageNumber): \(error.localizedDescription)")
+                    failedPageNumbers.insert(pageNumber)
+                    DiagnosticsLogger.shared.log(
+                        level: .error,
+                        event: "ocr.page_failed",
+                        context: ["page": "\(pageNumber)", "error": String(describing: error)]
+                    )
+                }
+                progress = Double(index + 1) / Double(max(total, 1))
+            }
+
+            if successCount == 0, !failures.isEmpty {
+                let firstFailure = failures.first.map { " \($0)" } ?? ""
+                throw SidecarError.serverError("OCR failed for all \(total) pages.\(firstFailure)")
+            }
+            if !failures.isEmpty {
+                let preview = failures.prefix(3).joined(separator: "\n")
+                let remaining = failures.count > 3 ? "\n…and \(failures.count - 3) more." : ""
+                presentWarning("OCR completed for \(successCount) page\(successCount == 1 ? "" : "s").\n\(preview)\(remaining)")
+            }
+        } catch is CancellationError {
+            presentWarning("OCR cancelled. Completed pages were kept.")
         } catch {
-            errorMessage = error.localizedDescription
+            presentError(
+                AppError.wrap(
+                    error,
+                    kind: .ocr,
+                    title: "OCR failed",
+                    fallback: "OCR Review could not finish recognizing the document.",
+                    recoveryAction: "Retry failed pages or check the sidecar status in Settings."
+                )
+            )
         }
+    }
+
+    /// Vision-on-PDF fast path: recognize all missing pages in parallel. Pages stream in
+    /// as they finish, so cancellation keeps completed work and the UI updates live.
+    private func recognizeAllPagesParallel(engine: String) async throws {
+        guard let startingDocumentID = document?.id else { return }
+        let structureVersion = pageStructureVersion
+        let missing = (0..<totalPages).filter { index in
+            let pageNumber = index + 1
+            guard !recognizingPageNumbers.contains(pageNumber) else { return false }
+            return currentPage(number: pageNumber) == nil || failedPageNumbers.contains(pageNumber)
+        }
+        guard !missing.isEmpty else { return }
+
+        let url = try resolvedSourceURL()
+        let missingNumbers = Set(missing.map { $0 + 1 })
+        recognizingPageNumbers.formUnion(missingNumbers)
+        failedPageNumbers.subtract(missingNumbers)
+        defer {
+            recognizingPageNumbers.subtract(missingNumbers)
+            jobStore.flush()
+        }
+
+        processingMessage = "Recognizing \(missing.count) page\(missing.count == 1 ? "" : "s")…"
+        operationState = .running(message: processingMessage, progress: 0, pageNumber: nil, canCancel: true)
+
+        let result = try await VisionOCRService.recognizePages(
+            pdfURL: url,
+            pageIndexes: missing,
+            onPage: { page in
+                Task { @MainActor [weak self] in
+                    guard let self,
+                          self.document?.id == startingDocumentID,
+                          self.pageStructureVersion == structureVersion
+                    else { return }
+                    self.mergeRecognizedPage(page, engine: engine, coalesceSave: true)
+                    self.failedPageNumbers.remove(page.pageNumber)
+                    self.recognizingPageNumbers.remove(page.pageNumber)
+                }
+            },
+            onProgress: { fraction in
+                Task { @MainActor [weak self] in
+                    guard let self, self.isProcessing else { return }
+                    self.progress = fraction
+                    self.operationState = .running(
+                        message: self.processingMessage,
+                        progress: fraction,
+                        pageNumber: nil,
+                        canCancel: true
+                    )
+                }
+            }
+        )
+
+        guard document?.id == startingDocumentID else { return }
+        for failure in result.failures {
+            failedPageNumbers.insert(failure.pageNumber)
+            DiagnosticsLogger.shared.log(
+                level: .error,
+                event: "ocr.page_failed",
+                context: ["page": "\(failure.pageNumber)", "error": failure.message]
+            )
+        }
+        if result.succeededCount == 0, !result.failures.isEmpty {
+            let first = result.failures.first.map { " Page \($0.pageNumber): \($0.message)" } ?? ""
+            throw SidecarError.serverError("OCR failed for all \(missing.count) pages.\(first)")
+        }
+        if !result.failures.isEmpty {
+            let preview = result.failures.prefix(3)
+                .map { "Page \($0.pageNumber): \($0.message)" }
+                .joined(separator: "\n")
+            let remaining = result.failures.count > 3 ? "\n…and \(result.failures.count - 3) more." : ""
+            presentWarning("OCR completed for \(result.succeededCount) page\(result.succeededCount == 1 ? "" : "s").\n\(preview)\(remaining)")
+        }
+        DiagnosticsLogger.shared.log(
+            level: .info,
+            event: "ocr.parallel_completed",
+            context: ["pages": "\(result.succeededCount)", "failed": "\(result.failures.count)"]
+        )
     }
 
     func updateCurrentPageText(_ text: String) {
@@ -561,9 +889,96 @@ final class DocumentViewModel: ObservableObject {
         refreshFindResults()
     }
 
+    struct DenoisePreviewState: Identifiable {
+        let id = UUID()
+        let plan: DenoiseService.Plan
+        var enabledKeys: Set<String>
+    }
+
+    func denoiseDocument() {
+        guard let document else { return }
+        guard document.ocrPageCount > 0 else {
+            presentError(
+                AppError(
+                    kind: .validation,
+                    title: "No OCR text to denoise",
+                    userMessage: "Run OCR on at least one page before denoising."
+                )
+            )
+            return
+        }
+
+        let plan = DenoiseService.makePlan(for: document)
+        guard plan.removedLineCount > 0 else {
+            presentWarning("Denoise found no repeated headers, footers, or page numbers in OCR'd pages.")
+            DiagnosticsLogger.shared.log(level: .info, event: "denoise.noop", context: ["document": document.id.uuidString])
+            return
+        }
+
+        denoisePreview = DenoisePreviewState(plan: plan, enabledKeys: plan.allCandidateKeys)
+    }
+
+    func cancelDenoisePreview() {
+        denoisePreview = nil
+        if let document {
+            DiagnosticsLogger.shared.log(level: .info, event: "denoise.cancelled", context: ["document": document.id.uuidString])
+        }
+    }
+
+    func applyDenoisePreview() {
+        guard let preview = denoisePreview, let document else { return }
+        denoisePreview = nil
+
+        let result = DenoiseService.apply(plan: preview.plan, to: document, enabledKeys: preview.enabledKeys)
+        let plan = result.plan
+        guard plan.removedLineCount > 0 else { return }
+
+        denoiseUndoSnapshot = document
+        canUndoDenoise = true
+        self.document = result.document
+        selectedBlockID = nil
+        jobStore.save(result.document)
+        refreshFindResults()
+        presentWarning("Denoise removed \(plan.removedLineCount) noisy line\(plan.removedLineCount == 1 ? "" : "s") across \(plan.affectedPageCount) page\(plan.affectedPageCount == 1 ? "" : "s").")
+        DiagnosticsLogger.shared.log(
+            level: .info,
+            event: "denoise.applied",
+            context: [
+                "document": document.id.uuidString,
+                "removedLines": "\(plan.removedLineCount)",
+                "affectedPages": "\(plan.affectedPageCount)",
+            ]
+        )
+    }
+
+    func undoDenoise() {
+        // The snapshot is only valid for the document it was taken from (a new document
+        // can be drag-opened while the undo banner is still visible).
+        guard let snapshot = denoiseUndoSnapshot, snapshot.id == document?.id else {
+            denoiseUndoSnapshot = nil
+            canUndoDenoise = false
+            return
+        }
+        denoiseUndoSnapshot = nil
+        canUndoDenoise = false
+        document = snapshot
+        selectedBlockID = nil
+        jobStore.save(snapshot)
+        refreshFindResults()
+        presentWarning("Denoise undone — original OCR text restored.")
+        DiagnosticsLogger.shared.log(level: .info, event: "denoise.undone", context: ["document": snapshot.id.uuidString])
+    }
+
     func appendPDFs() {
+        if blockStructureEditIfProcessing() { return }
         guard let pdf = pdfDocument else {
-            errorMessage = "Open a PDF before appending other files."
+            presentError(
+                AppError(
+                    kind: .validation,
+                    title: "No PDF open",
+                    userMessage: "Open a PDF before appending other files."
+                )
+            )
             return
         }
 
@@ -575,8 +990,16 @@ final class DocumentViewModel: ObservableObject {
         guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
 
         let added = PDFToolsService.appendPDFs(from: panel.urls, to: pdf)
+        pageStructureVersion += 1
         guard added > 0 else {
-            errorMessage = "Could not append any pages from the selected PDFs."
+            presentError(
+                AppError(
+                    kind: .open,
+                    title: "Append failed",
+                    userMessage: "OCR Review could not append any pages from the selected PDFs.",
+                    recoveryAction: "Check that the selected files are valid PDFs."
+                )
+            )
             return
         }
 
@@ -598,22 +1021,36 @@ final class DocumentViewModel: ObservableObject {
         guard panel.runModal() == .OK, panel.urls.count >= 2 else { return }
 
         guard let combined = PDFToolsService.combine(urls: panel.urls) else {
-            errorMessage = "Could not combine the selected PDFs."
+            presentError(
+                AppError(
+                    kind: .open,
+                    title: "Combine failed",
+                    userMessage: "OCR Review could not combine the selected PDFs.",
+                    recoveryAction: "Check that the selected files are valid PDFs."
+                )
+            )
             return
         }
 
-        guard let savedURL = PDFToolsService.savePDF(
-            combined,
-            suggestedFilename: "combined.pdf",
-            from: NSApp.keyWindow
-        ) else { return }
-
-        Task { await open(url: savedURL) }
+        switch PDFToolsService.savePDFOutcome(combined, suggestedFilename: "combined.pdf", from: NSApp.keyWindow) {
+        case .saved(let savedURL):
+            Task { await open(url: savedURL) }
+        case .cancelled:
+            break
+        case .failed(let error):
+            presentError(error)
+        }
     }
 
     func splitPDFPrompt() {
         guard pdfDocument != nil else {
-            errorMessage = "Open a PDF before splitting."
+            presentError(
+                AppError(
+                    kind: .validation,
+                    title: "No PDF open",
+                    userMessage: "Open a PDF before splitting."
+                )
+            )
             return
         }
 
@@ -632,18 +1069,29 @@ final class DocumentViewModel: ObservableObject {
     func splitPDF(pageRangeText: String) {
         guard let pdf = pdfDocument else { return }
         guard let range = PDFToolsService.parsePageRange(pageRangeText, totalPages: totalPages) else {
-            errorMessage = "Invalid page range. Use e.g. 3-10 or 5."
+            presentError(
+                AppError(
+                    kind: .validation,
+                    title: "Invalid page range",
+                    userMessage: "Use a valid page range such as 3-10 or 5."
+                )
+            )
             return
         }
         guard let extracted = PDFToolsService.extractPages(from: pdf, range: range) else {
-            errorMessage = "Could not extract pages."
+            presentError(
+                AppError(
+                    kind: .export,
+                    title: "Extract failed",
+                    userMessage: "OCR Review could not extract those pages.",
+                    recoveryAction: "Check the page range and try again."
+                )
+            )
             return
         }
 
         let filename = "pages_\(range.lowerBound)-\(range.upperBound).pdf"
-        if PDFToolsService.savePDF(extracted, suggestedFilename: filename, from: NSApp.keyWindow) == nil {
-            errorMessage = "Could not save extracted PDF."
-        }
+        handleExportOutcome(PDFToolsService.savePDFOutcome(extracted, suggestedFilename: filename, from: NSApp.keyWindow))
     }
 
     func updateBlockText(_ blockID: UUID, text: String) {
@@ -677,9 +1125,24 @@ final class DocumentViewModel: ObservableObject {
         deletePage(at: currentPageIndex)
     }
 
+    /// Structure edits are blocked while OCR is in flight: workers stream results keyed
+    /// by page number, and renumbering pages underneath them corrupts the mapping.
+    private func blockStructureEditIfProcessing() -> Bool {
+        guard isProcessing else { return false }
+        presentWarning("Finish or cancel the current operation before changing pages.")
+        return true
+    }
+
     func deletePage(at index: Int) {
-        guard let pdf = pdfDocument, pdf.pageCount > 1 else {
-            errorMessage = "Cannot delete the only page in the document."
+        if blockStructureEditIfProcessing() { return }
+        guard let pdf = pdfDocument, pdf.pageCount > 1, index >= 0, index < pdf.pageCount else {
+            presentError(
+                AppError(
+                    kind: .validation,
+                    title: "Cannot delete page",
+                    userMessage: "OCR Review cannot delete the only page in the document."
+                )
+            )
             return
         }
 
@@ -693,6 +1156,7 @@ final class DocumentViewModel: ObservableObject {
         pdf.removePage(at: index)
         pdfDocumentModified = true
         pdfDocument = pdf
+        pageStructureVersion += 1
 
         if var doc = document {
             doc.pages = PageStructureService.remapAfterDelete(
@@ -704,6 +1168,13 @@ final class DocumentViewModel: ObservableObject {
             jobStore.save(doc)
         }
 
+        // Keep the failure badges pointing at the same physical pages.
+        let deletedNumber = index + 1
+        failedPageNumbers = Set(failedPageNumbers.compactMap { n in
+            if n == deletedNumber { return nil }
+            return n > deletedNumber ? n - 1 : n
+        })
+
         if currentPageIndex >= pdf.pageCount {
             currentPageIndex = max(0, pdf.pageCount - 1)
         } else if index < currentPageIndex {
@@ -714,6 +1185,7 @@ final class DocumentViewModel: ObservableObject {
     }
 
     func movePage(from sourceIndex: Int, to destIndex: Int) {
+        if blockStructureEditIfProcessing() { return }
         guard let pdf = pdfDocument, var doc = document else { return }
         guard sourceIndex != destIndex,
               sourceIndex >= 0, destIndex >= 0,
@@ -725,6 +1197,9 @@ final class DocumentViewModel: ObservableObject {
         pdf.insert(page, at: destIndex)
         pdfDocumentModified = true
         pdfDocument = pdf
+        pageStructureVersion += 1
+        // Failure badges can't be remapped cheaply across a move; recompute on retry.
+        failedPageNumbers = []
 
         doc.pages = PageStructureService.remapAfterMove(
             pages: doc.pages,
@@ -763,30 +1238,76 @@ final class DocumentViewModel: ObservableObject {
 
     func exportMarkdown() {
         guard let document else { return }
-        ExportService.exportMarkdown(document: document, totalPages: totalPages, from: NSApp.keyWindow)
+        let stem = document.filename
+            .replacingOccurrences(of: ".pdf", with: "", options: .caseInsensitive)
+            .replacingOccurrences(of: ".png", with: "", options: .caseInsensitive)
+            .replacingOccurrences(of: ".jpg", with: "", options: .caseInsensitive)
+
+        startOperation {
+            self.beginProcessing("Exporting Markdown…", progress: 0, canCancel: true)
+            self.clearError()
+            defer { self.endProcessing() }
+
+            // Prefer the sidecar's layout-aware Markdown (headings, lists, tables);
+            // fall back to the local line dump when the sidecar is unavailable.
+            var text: String?
+            if document.ocrPageCount > 0 {
+                do {
+                    try await EngineSidecarClient.ensureAvailable()
+                    text = try await EngineSidecarClient.exportMarkdown(document: document)
+                } catch is CancellationError {
+                    self.presentWarning("Export cancelled.")
+                    return
+                } catch {
+                    text = nil  // fall back to local generation below
+                }
+            }
+            let markdownText = text ?? ExportService.markdown(for: document, totalPages: self.totalPages)
+            self.progress = 0.8
+            self.handleExportOutcome(
+                ExportService.saveMarkdown(
+                    markdownText,
+                    suggestedFilename: "\(stem).md",
+                    from: NSApp.keyWindow
+                )
+            )
+        }
     }
 
     func exportDOCX() {
         guard let document else { return }
-        Task {
-            isProcessing = true
-            errorMessage = nil
-            defer { isProcessing = false }
+        startOperation {
+            self.beginProcessing("Exporting Word document…", progress: 0, canCancel: true)
+            self.clearError()
+            defer { self.endProcessing() }
 
             do {
                 try await EngineSidecarClient.ensureAvailable()
                 let docxData = try await EngineSidecarClient.exportDOCX(document: document)
+                self.progress = 0.8
                 let stem = document.filename
                     .replacingOccurrences(of: ".pdf", with: "", options: .caseInsensitive)
                     .replacingOccurrences(of: ".png", with: "", options: .caseInsensitive)
                     .replacingOccurrences(of: ".jpg", with: "", options: .caseInsensitive)
-                ExportService.exportDOCX(
-                    data: docxData,
-                    suggestedFilename: "\(stem).docx",
-                    from: NSApp.keyWindow
+                self.handleExportOutcome(
+                    ExportService.exportDOCX(
+                        data: docxData,
+                        suggestedFilename: "\(stem).docx",
+                        from: NSApp.keyWindow
+                    )
                 )
+            } catch is CancellationError {
+                self.presentWarning("Export cancelled.")
             } catch {
-                errorMessage = error.localizedDescription
+                self.presentError(
+                    AppError.wrap(
+                        error,
+                        kind: .export,
+                        title: "Export failed",
+                        fallback: "OCR Review could not export the Word document.",
+                        recoveryAction: "Check the sidecar status and try again."
+                    )
+                )
             }
         }
     }
@@ -794,29 +1315,44 @@ final class DocumentViewModel: ObservableObject {
     func exportSearchablePDF() {
         guard let document else { return }
 
-        Task {
-            isProcessing = true
-            errorMessage = nil
-            defer { isProcessing = false }
+        startOperation {
+            self.beginProcessing("Building searchable PDF…", progress: 0, canCancel: true)
+            self.clearError()
+            defer { self.endProcessing() }
 
             do {
+                // Resolve the source BEFORE any await: a slow sidecar health check must
+                // not let a newly opened document swap in under this export.
+                let sourceURL = try self.resolvedSourceURL()
                 try await EngineSidecarClient.ensureAvailable()
-                let sourceURL = try resolvedSourceURL()
                 let pdfData = try await EngineSidecarClient.exportSearchablePDF(
                     sourceURL: sourceURL,
                     document: document
                 )
+                self.progress = 0.8
                 let stem = document.filename
                     .replacingOccurrences(of: ".pdf", with: "", options: .caseInsensitive)
                     .replacingOccurrences(of: ".png", with: "", options: .caseInsensitive)
                     .replacingOccurrences(of: ".jpg", with: "", options: .caseInsensitive)
-                ExportService.exportSearchablePDF(
-                    data: pdfData,
-                    suggestedFilename: "\(stem)_searchable.pdf",
-                    from: NSApp.keyWindow
+                self.handleExportOutcome(
+                    ExportService.exportSearchablePDF(
+                        data: pdfData,
+                        suggestedFilename: "\(stem)_searchable.pdf",
+                        from: NSApp.keyWindow
+                    )
                 )
+            } catch is CancellationError {
+                self.presentWarning("Export cancelled.")
             } catch {
-                errorMessage = error.localizedDescription
+                self.presentError(
+                    AppError.wrap(
+                        error,
+                        kind: .export,
+                        title: "Export failed",
+                        fallback: "OCR Review could not build the searchable PDF.",
+                        recoveryAction: "Check that the source PDF still exists and the sidecar is running."
+                    )
+                )
             }
         }
     }
@@ -834,21 +1370,25 @@ final class DocumentViewModel: ObservableObject {
 
     func exportText() {
         guard let document else { return }
-        ExportService.exportPlainText(
-            document: document,
-            totalPages: totalPages,
-            suggestedFilename: "\(filenameStem()).txt",
-            from: NSApp.keyWindow
+        handleExportOutcome(
+            ExportService.exportPlainText(
+                document: document,
+                totalPages: totalPages,
+                suggestedFilename: "\(filenameStem()).txt",
+                from: NSApp.keyWindow
+            )
         )
     }
 
     func exportRTF() {
         guard let document else { return }
-        ExportService.exportRTF(
-            document: document,
-            totalPages: totalPages,
-            suggestedFilename: "\(filenameStem()).rtf",
-            from: NSApp.keyWindow
+        handleExportOutcome(
+            ExportService.exportRTF(
+                document: document,
+                totalPages: totalPages,
+                suggestedFilename: "\(filenameStem()).rtf",
+                from: NSApp.keyWindow
+            )
         )
     }
 
@@ -868,6 +1408,8 @@ final class DocumentViewModel: ObservableObject {
     }
 
     func closeDocument() {
+        currentOperationTask?.cancel()
+        currentOperationTask = nil
         jobStore.flush()
         document = nil
         loadedSource = nil
@@ -880,6 +1422,76 @@ final class DocumentViewModel: ObservableObject {
         currentFindMatchIndex = 0
         selectedBlockID = nil
         pdfDocumentModified = false
+        processingMessage = ""
+        appError = nil
+        errorMessage = nil
+        operationState = .idle
+        failedPageNumbers = []
+        recognizingPageNumbers = []
+        denoisePreview = nil
+        denoiseUndoSnapshot = nil
+        canUndoDenoise = false
+        pageStructureVersion += 1
+        ThumbnailCache.shared.clear()
+    }
+
+    func clearError() {
+        appError = nil
+        errorMessage = nil
+    }
+
+    private func presentError(_ error: AppError) {
+        appError = error
+        errorMessage = error.displayMessage
+        operationState = .failed(error)
+        DiagnosticsLogger.shared.log(
+            level: .error,
+            event: "app.error",
+            context: [
+                "kind": error.kind.rawValue,
+                "title": error.title,
+                "message": error.userMessage,
+                "technical": error.technicalMessage ?? "",
+            ]
+        )
+    }
+
+    private func presentWarning(_ message: String) {
+        appError = nil
+        errorMessage = message
+        DiagnosticsLogger.shared.log(level: .warning, event: "app.warning", context: ["message": message])
+    }
+
+    private func handleExportOutcome(_ outcome: ExportOutcome) {
+        switch outcome {
+        case .saved(let url):
+            clearError()
+            DiagnosticsLogger.shared.log(level: .info, event: "export.completed", context: ["url": url.path])
+        case .cancelled:
+            DiagnosticsLogger.shared.log(level: .info, event: "export.cancelled")
+        case .failed(let error):
+            presentError(error)
+        }
+    }
+
+    private func beginProcessing(_ message: String, progress: Double = 0, pageNumber: Int? = nil, canCancel: Bool = false) {
+        processingMessage = message
+        self.progress = progress
+        isProcessing = true
+        operationState = .running(
+            message: message,
+            progress: progress,
+            pageNumber: pageNumber,
+            canCancel: canCancel
+        )
+    }
+
+    private func endProcessing() {
+        isProcessing = false
+        processingMessage = ""
+        if operationState.isRunning {
+            operationState = .idle
+        }
     }
 
     func toggleFindPanel() {

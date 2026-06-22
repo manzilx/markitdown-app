@@ -13,18 +13,22 @@
 		30DB227B2A6BD59447ADAEEF /* PageStructureService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 84BD3A7E900A4519C80568E1 /* PageStructureService.swift */; };
 		3B6C954F14B86D63BCA55D84 /* OCRModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09FDD318D436760F7A6B79C4 /* OCRModels.swift */; };
 		3D7DC5AB47A0367D8FE65BE9 /* OCRSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E0A3039A2FA93F7F2B710AB /* OCRSettings.swift */; };
+		3EB98C8EE5DE3BBC38EEC68A /* ReadingOrder.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3E44E8310EA3327949F5A5E /* ReadingOrder.swift */; };
 		3FBE87C142C3965E8F00799F /* BBoxCoordinateMapper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1374318AFBCFD08AF3DBAFDD /* BBoxCoordinateMapper.swift */; };
 		417CDAD00B0C914D06218D40 /* OCRReviewApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = D390CFFF0F7DD29460B64109 /* OCRReviewApp.swift */; };
 		46D907BC212C1DEFCF7894D8 /* PDFToolsService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5081BC21786E2F2910CCDB37 /* PDFToolsService.swift */; };
 		4F0BECD33C7581190C6898A9 /* FindReplaceBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60281C9164AF240456236DBB /* FindReplaceBar.swift */; };
 		515A4812F6FE006D42B669C2 /* ThumbnailCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4BA9561271188B5CE90273FC /* ThumbnailCache.swift */; };
+		6D8567E7431BB3EC56D9A40C /* DenoisePreviewSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5E8CAA91C8CCCBA6C4480DB /* DenoisePreviewSheet.swift */; };
 		6F3EBDC5C503E51B0AE6B884 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20A318F11438B2716362CA7 /* Theme.swift */; };
 		7702AB7CB10E8DEBB20C7C57 /* ConfidencePalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54DA148A30388C3DDE90929F /* ConfidencePalette.swift */; };
 		7A44CE6A278923123181D4E7 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 5ADE9A35038333724772EC31 /* Assets.xcassets */; };
 		7B7E1C86DA2BD12F4CE075B7 /* ExportService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0310EBC5607723838CE6F9EC /* ExportService.swift */; };
+		7FC1C554A0FD6857D572F5E5 /* DenoiseService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0EECB58AF7BBFE05D08BE01 /* DenoiseService.swift */; };
 		8240D886047BF267DDE3DCCD /* JobStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF28BF40E6B5C91DF15F8D26 /* JobStore.swift */; };
 		8617CFD2A939E59D9EE8B303 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 401431A0CD514EA476139D49 /* ContentView.swift */; };
 		956A68CF74A4FE2F7C38FFA9 /* OCRTextEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68E05F16E8B76D0570E98E08 /* OCRTextEditorView.swift */; };
+		A02F2ADB5E2533E01818EBF1 /* DenoiseServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCAF572BC118D40777408602 /* DenoiseServiceTests.swift */; };
 		B0DEFC38284464D98A83D3A3 /* CommandPaletteView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11252FB5760E4AF3547868F4 /* CommandPaletteView.swift */; };
 		B84196AF509FE840615E92F2 /* Components.swift in Sources */ = {isa = PBXBuildFile; fileRef = 564B9C7A0EEAF665EA801827 /* Components.swift */; };
 		C287FD8BDA95BB31DA8F5D12 /* SidecarOCRService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1506852E83F397CE200284E8 /* SidecarOCRService.swift */; };
@@ -32,11 +36,23 @@
 		D520D5B2993CE3084C065230 /* ReviewWorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22B04F9EBCB5514039B9DE68 /* ReviewWorkspaceView.swift */; };
 		D65ACAACBB39103B19F35838 /* SpellSuggestionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8987C477A327CCC2A8B26155 /* SpellSuggestionsView.swift */; };
 		E4978250BDC073F0FB1920A5 /* EngineSidecarClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 713B480B6249FD3B06C37284 /* EngineSidecarClient.swift */; };
+		E5D0CDA2178A9CEB51CCB9A1 /* Reliability.swift in Sources */ = {isa = PBXBuildFile; fileRef = C98F4A9FCB250CFD6BA283AD /* Reliability.swift */; };
+		E75DB48F191C5CA45488F774 /* ReadingOrderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D955F25F7D629AA437612289 /* ReadingOrderTests.swift */; };
 		EAD46605DDC16CF47ABC6CAC /* SpellcheckService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5643122EFFFAE37B70AEB9FA /* SpellcheckService.swift */; };
 		ECB3D721EEAFC64A95783AE5 /* PageThumbnailStrip.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5C7DF94AB7A27F136C3D4FB /* PageThumbnailStrip.swift */; };
 		F638307494B80966617672CA /* DocumentLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 978AE965B9AD371C77432B5B /* DocumentLoader.swift */; };
 		FF69A81257832761517DADC5 /* SidecarProcessManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 661601D54AA1640587F73989 /* SidecarProcessManager.swift */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		3598F9642A55F5469FAE0D50 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 30224A86E3A22A5567F91721 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 27FA4F88A99EE692DD8EAF59;
+			remoteInfo = OCRReview;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
 		0310EBC5607723838CE6F9EC /* ExportService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportService.swift; sourceTree = "<group>"; };
@@ -64,11 +80,18 @@
 		8A7BB87DACBBB5A42DDB14FE /* OCRReview.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = OCRReview.entitlements; sourceTree = "<group>"; };
 		978AE965B9AD371C77432B5B /* DocumentLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentLoader.swift; sourceTree = "<group>"; };
 		9FAB147776ED28161908F510 /* PDFPageViewWithBlocks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PDFPageViewWithBlocks.swift; sourceTree = "<group>"; };
+		B0EECB58AF7BBFE05D08BE01 /* DenoiseService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DenoiseService.swift; sourceTree = "<group>"; };
 		B2BB7002734424990BC73F6B /* VisionOCRService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisionOCRService.swift; sourceTree = "<group>"; };
 		B5C7DF94AB7A27F136C3D4FB /* PageThumbnailStrip.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PageThumbnailStrip.swift; sourceTree = "<group>"; };
 		C20A318F11438B2716362CA7 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
+		C5E8CAA91C8CCCBA6C4480DB /* DenoisePreviewSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DenoisePreviewSheet.swift; sourceTree = "<group>"; };
+		C98F4A9FCB250CFD6BA283AD /* Reliability.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Reliability.swift; sourceTree = "<group>"; };
 		D2D85B0C24319651B1621DBA /* OCRReview.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OCRReview.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		D390CFFF0F7DD29460B64109 /* OCRReviewApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OCRReviewApp.swift; sourceTree = "<group>"; };
+		D955F25F7D629AA437612289 /* ReadingOrderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadingOrderTests.swift; sourceTree = "<group>"; };
+		DCAF572BC118D40777408602 /* DenoiseServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DenoiseServiceTests.swift; sourceTree = "<group>"; };
+		E01BD0202FCCD4D99125AF16 /* OCRReviewTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = OCRReviewTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		E3E44E8310EA3327949F5A5E /* ReadingOrder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadingOrder.swift; sourceTree = "<group>"; };
 		EF28BF40E6B5C91DF15F8D26 /* JobStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JobStore.swift; sourceTree = "<group>"; };
 		FECECC429CDFFFFF09FF1949 /* FindService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FindService.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -78,6 +101,7 @@
 			isa = PBXGroup;
 			children = (
 				983EB9081221DFE2A59E6671 /* OCRReview */,
+				6E0F7D770BC34759E8C780C2 /* OCRReviewTests */,
 				F5A39EF0FC16854B009082F6 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -103,6 +127,7 @@
 			children = (
 				1374318AFBCFD08AF3DBAFDD /* BBoxCoordinateMapper.swift */,
 				54DA148A30388C3DDE90929F /* ConfidencePalette.swift */,
+				B0EECB58AF7BBFE05D08BE01 /* DenoiseService.swift */,
 				978AE965B9AD371C77432B5B /* DocumentLoader.swift */,
 				713B480B6249FD3B06C37284 /* EngineSidecarClient.swift */,
 				0310EBC5607723838CE6F9EC /* ExportService.swift */,
@@ -111,6 +136,8 @@
 				3E0A3039A2FA93F7F2B710AB /* OCRSettings.swift */,
 				84BD3A7E900A4519C80568E1 /* PageStructureService.swift */,
 				5081BC21786E2F2910CCDB37 /* PDFToolsService.swift */,
+				E3E44E8310EA3327949F5A5E /* ReadingOrder.swift */,
+				C98F4A9FCB250CFD6BA283AD /* Reliability.swift */,
 				1506852E83F397CE200284E8 /* SidecarOCRService.swift */,
 				661601D54AA1640587F73989 /* SidecarProcessManager.swift */,
 				5643122EFFFAE37B70AEB9FA /* SpellcheckService.swift */,
@@ -118,6 +145,15 @@
 				B2BB7002734424990BC73F6B /* VisionOCRService.swift */,
 			);
 			path = Services;
+			sourceTree = "<group>";
+		};
+		6E0F7D770BC34759E8C780C2 /* OCRReviewTests */ = {
+			isa = PBXGroup;
+			children = (
+				DCAF572BC118D40777408602 /* DenoiseServiceTests.swift */,
+				D955F25F7D629AA437612289 /* ReadingOrderTests.swift */,
+			);
+			path = OCRReviewTests;
 			sourceTree = "<group>";
 		};
 		983EB9081221DFE2A59E6671 /* OCRReview */ = {
@@ -150,6 +186,7 @@
 			children = (
 				11252FB5760E4AF3547868F4 /* CommandPaletteView.swift */,
 				401431A0CD514EA476139D49 /* ContentView.swift */,
+				C5E8CAA91C8CCCBA6C4480DB /* DenoisePreviewSheet.swift */,
 				60281C9164AF240456236DBB /* FindReplaceBar.swift */,
 				68E05F16E8B76D0570E98E08 /* OCRTextEditorView.swift */,
 				B5C7DF94AB7A27F136C3D4FB /* PageThumbnailStrip.swift */,
@@ -164,6 +201,7 @@
 			isa = PBXGroup;
 			children = (
 				D2D85B0C24319651B1621DBA /* OCRReview.app */,
+				E01BD0202FCCD4D99125AF16 /* OCRReviewTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -189,6 +227,24 @@
 			productReference = D2D85B0C24319651B1621DBA /* OCRReview.app */;
 			productType = "com.apple.product-type.application";
 		};
+		45245617B84003DEDBF9D14E /* OCRReviewTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 1C6AEB944389A3AE33F64436 /* Build configuration list for PBXNativeTarget "OCRReviewTests" */;
+			buildPhases = (
+				3D8E927F467B68CA38EBF4FF /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				9313190005C81786459FF5AD /* PBXTargetDependency */,
+			);
+			name = OCRReviewTests;
+			packageProductDependencies = (
+			);
+			productName = OCRReviewTests;
+			productReference = E01BD0202FCCD4D99125AF16 /* OCRReviewTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -200,6 +256,9 @@
 				TargetAttributes = {
 					27FA4F88A99EE692DD8EAF59 = {
 						DevelopmentTeam = "$(DEVELOPMENT_TEAM)";
+						ProvisioningStyle = Automatic;
+					};
+					45245617B84003DEDBF9D14E = {
 						ProvisioningStyle = Automatic;
 					};
 				};
@@ -219,6 +278,7 @@
 			projectRoot = "";
 			targets = (
 				27FA4F88A99EE692DD8EAF59 /* OCRReview */,
+				45245617B84003DEDBF9D14E /* OCRReviewTests */,
 			);
 		};
 /* End PBXProject section */
@@ -235,6 +295,15 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		3D8E927F467B68CA38EBF4FF /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A02F2ADB5E2533E01818EBF1 /* DenoiseServiceTests.swift in Sources */,
+				E75DB48F191C5CA45488F774 /* ReadingOrderTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		600B906740A94BE3F73471AB /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -244,6 +313,8 @@
 				B84196AF509FE840615E92F2 /* Components.swift in Sources */,
 				7702AB7CB10E8DEBB20C7C57 /* ConfidencePalette.swift in Sources */,
 				8617CFD2A939E59D9EE8B303 /* ContentView.swift in Sources */,
+				6D8567E7431BB3EC56D9A40C /* DenoisePreviewSheet.swift in Sources */,
+				7FC1C554A0FD6857D572F5E5 /* DenoiseService.swift in Sources */,
 				F638307494B80966617672CA /* DocumentLoader.swift in Sources */,
 				08A8336CA966D4235FBC5A10 /* DocumentViewModel.swift in Sources */,
 				E4978250BDC073F0FB1920A5 /* EngineSidecarClient.swift in Sources */,
@@ -259,6 +330,8 @@
 				46D907BC212C1DEFCF7894D8 /* PDFToolsService.swift in Sources */,
 				30DB227B2A6BD59447ADAEEF /* PageStructureService.swift in Sources */,
 				ECB3D721EEAFC64A95783AE5 /* PageThumbnailStrip.swift in Sources */,
+				3EB98C8EE5DE3BBC38EEC68A /* ReadingOrder.swift in Sources */,
+				E5D0CDA2178A9CEB51CCB9A1 /* Reliability.swift in Sources */,
 				D520D5B2993CE3084C065230 /* ReviewWorkspaceView.swift in Sources */,
 				C287FD8BDA95BB31DA8F5D12 /* SidecarOCRService.swift in Sources */,
 				FF69A81257832761517DADC5 /* SidecarProcessManager.swift in Sources */,
@@ -272,7 +345,33 @@
 		};
 /* End PBXSourcesBuildPhase section */
 
+/* Begin PBXTargetDependency section */
+		9313190005C81786459FF5AD /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 27FA4F88A99EE692DD8EAF59 /* OCRReview */;
+			targetProxy = 3598F9642A55F5469FAE0D50 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
 /* Begin XCBuildConfiguration section */
+		1CCAB87C715FD6194A14664C /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGNING_ALLOWED = NO;
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.ocrreview.tests;
+				SDKROOT = macosx;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/OCR Review.app/Contents/MacOS/OCR Review";
+			};
+			name = Debug;
+		};
 		1E97715C167B682BAD5838D0 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -287,6 +386,7 @@
 					"@executable_path/../Frameworks",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.ocrreview.app;
+				PRODUCT_MODULE_NAME = OCRReview;
 				PRODUCT_NAME = "OCR Review";
 				SDKROOT = macosx;
 			};
@@ -306,6 +406,7 @@
 					"@executable_path/../Frameworks",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.ocrreview.app;
+				PRODUCT_MODULE_NAME = OCRReview;
 				PRODUCT_NAME = "OCR Review";
 				SDKROOT = macosx;
 			};
@@ -440,6 +541,24 @@
 			};
 			name = Debug;
 		};
+		D5611D3F1BD63D275FAA22C5 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGNING_ALLOWED = NO;
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.ocrreview.tests;
+				SDKROOT = macosx;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/OCR Review.app/Contents/MacOS/OCR Review";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -448,6 +567,15 @@
 			buildConfigurations = (
 				A45BDB8ADC5E650DCF5FBCF9 /* Debug */,
 				1E97715C167B682BAD5838D0 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		1C6AEB944389A3AE33F64436 /* Build configuration list for PBXNativeTarget "OCRReviewTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1CCAB87C715FD6194A14664C /* Debug */,
+				D5611D3F1BD63D275FAA22C5 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;

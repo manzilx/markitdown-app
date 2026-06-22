@@ -7,6 +7,7 @@ from starlette.requests import Request
 from markitdown_api.config import MAX_MULTIPART_PART_BYTES
 
 _original_get_form = Request._get_form
+_PATCHED_MARKER = "_markitdown_large_part_patch"
 
 
 async def _get_form_with_large_parts(
@@ -25,4 +26,7 @@ async def _get_form_with_large_parts(
 
 
 def apply_multipart_limit_patch() -> None:
+    if getattr(Request._get_form, _PATCHED_MARKER, False):
+        return
+    setattr(_get_form_with_large_parts, _PATCHED_MARKER, True)
     Request._get_form = _get_form_with_large_parts  # type: ignore[method-assign]

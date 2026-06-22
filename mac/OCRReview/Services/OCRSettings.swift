@@ -33,12 +33,21 @@ enum OCRSettings {
         selectedEngine != "vision"
     }
 
+    static func supportsSidecarPageOCR(_ engineID: String) -> Bool {
+        switch engineID {
+        case "vision", "builtin", "pymupdf4llm":
+            return false
+        default:
+            return true
+        }
+    }
+
     static func engineLabel(for engineID: String) -> String {
         switch engineID {
         case "vision": "Apple Vision · on-device"
-        case "builtin": "Built-in · sidecar"
+        case "builtin": "Built-in · converter only"
         case "azure_doc_intel": "Azure Doc Intelligence"
-        case "pymupdf4llm": "PyMuPDF4LLM"
+        case "pymupdf4llm": "PyMuPDF4LLM · converter only"
         case "ocr_plugin": "LLM OCR"
         default: engineID
         }

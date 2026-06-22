@@ -4,10 +4,12 @@ import {
   fetchEngines,
   getProjectRoot,
   getSidecarUrl,
+  setDefaultEngine,
   setProjectRoot,
   setSidecarUrl,
   sidecarHealth,
 } from "../services/sidecar";
+import type { SidecarEngine } from "../models/ocr";
 
 interface Props {
   open: boolean;
@@ -20,7 +22,7 @@ export default function SettingsModal({ open, engine, onEngineChange, onClose }:
   const [url, setUrl] = useState("http://127.0.0.1:8001");
   const [root, setRoot] = useState("");
   const [healthy, setHealthy] = useState(false);
-  const [engines, setEngines] = useState<{ id: string; label: string; available: boolean }[]>([]);
+  const [engines, setEngines] = useState<SidecarEngine[]>([]);
   const [status, setStatus] = useState("");
 
   useEffect(() => {
@@ -48,11 +50,14 @@ export default function SettingsModal({ open, engine, onEngineChange, onClose }:
           OCR engine
           <select value={engine} onChange={(e) => onEngineChange(e.target.value)}>
             <option value="windows_ocr">Windows OCR (on-device)</option>
-            {engines.map((e) => (
-              <option key={e.id} value={e.id} disabled={!e.available}>
-                {e.label}
-              </option>
-            ))}
+            {engines
+              .filter((e) => e.supportsOcr)
+              .map((e) => (
+                <option key={e.id} value={e.id} disabled={!e.available}>
+                  {e.label}
+                  {e.available ? "" : ` (${e.reason ?? "unavailable"})`}
+                </option>
+              ))}
           </select>
         </label>
         <label>
@@ -71,6 +76,7 @@ export default function SettingsModal({ open, engine, onEngineChange, onClose }:
             onClick={async () => {
               await setSidecarUrl(url);
               await setProjectRoot(root);
+              await setDefaultEngine(engine);
               setStatus("Saved");
               setHealthy(await sidecarHealth());
             }}
@@ -80,7 +86,7 @@ export default function SettingsModal({ open, engine, onEngineChange, onClose }:
           <button
             type="button"
             onClick={async () => {
-              setStatus("Starting sidecar…");
+              setStatus("Starting sidecar...");
               try {
                 await ensureSidecar();
                 setHealthy(true);

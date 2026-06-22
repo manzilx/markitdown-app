@@ -1,10 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import * as pdfjs from "pdfjs-dist";
-import pdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import type { OCRBlock } from "../models/ocr";
 import { confidenceColor } from "../services/documentLogic";
-
-pdfjs.GlobalWorkerOptions.workerSrc = pdfWorker;
+import { renderSourcePageToCanvas } from "../services/rendering";
 
 interface Props {
   sourcePath: string | null;
@@ -39,28 +36,16 @@ export default function PDFPageView({
     (async () => {
       try {
         setError(null);
-        const { invoke } = await import("@tauri-apps/api/core");
-        const raw = await invoke<number[]>("read_file_bytes", { path: sourcePath });
-        const data = new Uint8Array(raw);
-
-        const pdf = await pdfjs.getDocument({ data }).promise;
-        const page = await pdf.getPage(pageNumber);
-        const viewport = page.getViewport({ scale: 1.5 });
         const canvas = canvasRef.current;
         if (!canvas || cancelled) return;
-        const ctx = canvas.getContext("2d");
-        if (!ctx) return;
-        canvas.width = viewport.width;
-        canvas.height = viewport.height;
-        setPageSize({ width: viewport.width, height: viewport.height });
-        await page.render({ canvasContext: ctx, viewport }).promise;
+        const png = await renderSourcePageToCanvas(canvas, sourcePath, pageNumber);
+        setPageSize({ width: canvas.width, height: canvas.height });
 
         if (onPageRendered) {
-          const png = canvas.toDataURL("image/png").split(",")[1];
           onPageRendered(png);
         }
       } catch (e) {
-        if (!cancelled) setError(e instanceof Error ? e.message : "Failed to render PDF");
+        if (!cancelled) setError(e instanceof Error ? e.message : "Failed to render page");
       }
     })();
 

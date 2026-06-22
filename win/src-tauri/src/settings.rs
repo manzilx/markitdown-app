@@ -16,6 +16,7 @@ fn settings_path() -> Result<PathBuf, String> {
 struct SettingsFile {
     sidecar_url: Option<String>,
     project_root: Option<String>,
+    default_engine: Option<String>,
 }
 
 fn load_settings() -> SettingsFile {
@@ -97,9 +98,19 @@ pub fn set_project_root(path: String) -> Result<(), String> {
 
 #[tauri::command]
 pub fn get_default_engine() -> Result<String, String> {
-    Ok(if cfg!(windows) {
-        "windows_ocr".into()
-    } else {
-        "builtin".into()
-    })
+    let settings = load_settings();
+    Ok(settings.default_engine.unwrap_or_else(|| {
+        if cfg!(windows) {
+            "windows_ocr".into()
+        } else {
+            "builtin".into()
+        }
+    }))
+}
+
+#[tauri::command]
+pub fn set_default_engine(engine: String) -> Result<(), String> {
+    let mut settings = load_settings();
+    settings.default_engine = Some(engine);
+    save_settings(&settings)
 }

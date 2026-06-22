@@ -26,6 +26,15 @@ class Engine(str, Enum):
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 MAX_MULTIPART_PART_BYTES = 100 * 1024 * 1024
 
+IMAGE_EXTENSIONS = {
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".tif",
+    ".tiff",
+    ".heic",
+}
+
 ALLOWED_EXTENSIONS = {
     ".pdf",
     ".docx",
@@ -41,6 +50,11 @@ ALLOWED_EXTENSIONS = {
     ".md",
     ".zip",
     ".epub",
+} | IMAGE_EXTENSIONS
+
+PAGE_IMAGE_OCR_ENGINES = {
+    Engine.AZURE_DOC_INTEL,
+    Engine.OCR_PLUGIN,
 }
 
 ENGINE_META: dict[Engine, dict[str, str]] = {
